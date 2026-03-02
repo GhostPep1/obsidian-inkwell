@@ -1,5 +1,8 @@
 import { PaperConfig, Viewport } from "../model/types";
 
+export const PAGE_HEIGHT = 1600;
+const PAGE_GAP = 18; // visual gap at page breaks
+
 export class PaperRenderer {
   render(ctx: CanvasRenderingContext2D, paper: PaperConfig, vp: Viewport): void {
     ctx.fillStyle = paper.color;
@@ -18,6 +21,34 @@ export class PaperRenderer {
       case "blank":
         break;
     }
+
+    this.drawPageBreaks(ctx, paper, vp);
+  }
+
+  private drawPageBreaks(ctx: CanvasRenderingContext2D, paper: PaperConfig, vp: Viewport): void {
+    const firstPage = Math.floor(vp.scrollY / PAGE_HEIGHT);
+    const lastPage = Math.ceil((vp.scrollY + vp.height) / PAGE_HEIGHT);
+
+    for (let p = firstPage + 1; p <= lastPage; p++) {
+      const breakY = p * PAGE_HEIGHT - vp.scrollY;
+      const gapTop = breakY - PAGE_GAP / 2;
+      const gapBottom = breakY + PAGE_GAP / 2;
+
+      // Fill gap with slightly darker background
+      ctx.fillStyle = "#E8E8EC";
+      ctx.fillRect(0, gapTop, vp.width, PAGE_GAP);
+
+      // Dashed line in center of gap
+      ctx.save();
+      ctx.strokeStyle = "#B0B0C0";
+      ctx.lineWidth = 1;
+      ctx.setLineDash([8, 6]);
+      ctx.beginPath();
+      ctx.moveTo(0, Math.round(breakY) + 0.5);
+      ctx.lineTo(vp.width, Math.round(breakY) + 0.5);
+      ctx.stroke();
+      ctx.restore();
+    }
   }
 
   private drawRuled(ctx: CanvasRenderingContext2D, paper: PaperConfig, vp: Viewport): void {
@@ -26,17 +57,24 @@ export class PaperRenderer {
     ctx.strokeStyle = lineColor;
     ctx.lineWidth = 0.5;
 
-    // First line starts at marginTop, then every lineSpacing after
-    const firstLine = Math.max(0, Math.floor((vp.scrollY - marginTop) / lineSpacing));
-    const lastLine = Math.ceil((vp.scrollY + vp.height - marginTop) / lineSpacing);
+    // Draw lines per page so each page gets its own top margin
+    const firstPage = Math.floor(vp.scrollY / PAGE_HEIGHT);
+    const lastPage = Math.ceil((vp.scrollY + vp.height) / PAGE_HEIGHT);
 
     ctx.beginPath();
-    for (let i = firstLine; i <= lastLine; i++) {
-      const y = Math.round(marginTop + i * lineSpacing - vp.scrollY) + 0.5;
-      if (y < 0) continue;
-      if (y > vp.height) break;
-      ctx.moveTo(0, y);
-      ctx.lineTo(vp.width, y);
+    for (let p = firstPage; p <= lastPage; p++) {
+      const pageTop = p * PAGE_HEIGHT;
+      const firstLine = 0;
+      const lastLine = Math.floor((PAGE_HEIGHT - marginTop) / lineSpacing);
+
+      for (let i = firstLine; i <= lastLine; i++) {
+        const docY = pageTop + marginTop + i * lineSpacing;
+        const screenY = Math.round(docY - vp.scrollY) + 0.5;
+        if (screenY < -1) continue;
+        if (screenY > vp.height + 1) break;
+        ctx.moveTo(0, screenY);
+        ctx.lineTo(vp.width, screenY);
+      }
     }
     ctx.stroke();
 
@@ -58,16 +96,22 @@ export class PaperRenderer {
     ctx.strokeStyle = lineColor;
     ctx.lineWidth = 0.5;
 
-    const firstRow = Math.max(0, Math.floor((vp.scrollY - marginTop) / lineSpacing));
-    const lastRow = Math.ceil((vp.scrollY + vp.height - marginTop) / lineSpacing);
+    const firstPage = Math.floor(vp.scrollY / PAGE_HEIGHT);
+    const lastPage = Math.ceil((vp.scrollY + vp.height) / PAGE_HEIGHT);
 
     ctx.beginPath();
-    for (let i = firstRow; i <= lastRow; i++) {
-      const y = Math.round(marginTop + i * lineSpacing - vp.scrollY) + 0.5;
-      if (y < 0) continue;
-      if (y > vp.height) break;
-      ctx.moveTo(0, y);
-      ctx.lineTo(vp.width, y);
+    for (let p = firstPage; p <= lastPage; p++) {
+      const pageTop = p * PAGE_HEIGHT;
+      const lastLine = Math.floor((PAGE_HEIGHT - marginTop) / lineSpacing);
+
+      for (let i = 0; i <= lastLine; i++) {
+        const docY = pageTop + marginTop + i * lineSpacing;
+        const screenY = Math.round(docY - vp.scrollY) + 0.5;
+        if (screenY < -1) continue;
+        if (screenY > vp.height + 1) break;
+        ctx.moveTo(0, screenY);
+        ctx.lineTo(vp.width, screenY);
+      }
     }
 
     const cols = Math.ceil(vp.width / lineSpacing);
@@ -85,19 +129,25 @@ export class PaperRenderer {
     ctx.fillStyle = lineColor;
     const dotRadius = 1.2;
 
-    const firstRow = Math.max(0, Math.floor((vp.scrollY - marginTop) / lineSpacing));
-    const lastRow = Math.ceil((vp.scrollY + vp.height - marginTop) / lineSpacing);
+    const firstPage = Math.floor(vp.scrollY / PAGE_HEIGHT);
+    const lastPage = Math.ceil((vp.scrollY + vp.height) / PAGE_HEIGHT);
     const cols = Math.ceil(vp.width / lineSpacing);
 
-    for (let row = firstRow; row <= lastRow; row++) {
-      const y = marginTop + row * lineSpacing - vp.scrollY;
-      if (y < 0) continue;
-      if (y > vp.height) break;
-      for (let col = 0; col <= cols; col++) {
-        const x = col * lineSpacing;
-        ctx.beginPath();
-        ctx.arc(x, y, dotRadius, 0, Math.PI * 2);
-        ctx.fill();
+    for (let p = firstPage; p <= lastPage; p++) {
+      const pageTop = p * PAGE_HEIGHT;
+      const lastRow = Math.floor((PAGE_HEIGHT - marginTop) / lineSpacing);
+
+      for (let row = 0; row <= lastRow; row++) {
+        const docY = pageTop + marginTop + row * lineSpacing;
+        const screenY = docY - vp.scrollY;
+        if (screenY < -1) continue;
+        if (screenY > vp.height + 1) break;
+        for (let col = 0; col <= cols; col++) {
+          const x = col * lineSpacing;
+          ctx.beginPath();
+          ctx.arc(x, screenY, dotRadius, 0, Math.PI * 2);
+          ctx.fill();
+        }
       }
     }
   }

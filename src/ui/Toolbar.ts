@@ -1,4 +1,4 @@
-import { ToolType, PaperType } from "../model/types";
+import { ToolType } from "../model/types";
 
 const COLORS = [
   { name: "Black",  value: "#1A1A2E" },
@@ -23,7 +23,6 @@ export interface ToolbarCallbacks {
   onRedo: () => void;
   onExportPng: () => void;
   onExportPdf: () => void;
-  onAddPage: () => void;
 }
 
 export class Toolbar {
@@ -40,13 +39,6 @@ export class Toolbar {
   }
 
   private build(): void {
-    // ─── Add Page ───────────────────────────────
-    const pageGroup = this.container.createDiv({ cls: "inkwell-toolbar-group" });
-    const addPageBtn = pageGroup.createEl("button", { cls: "inkwell-tool-btn", text: "➕", attr: { "aria-label": "Add Page" } });
-    addPageBtn.addEventListener("click", () => this.callbacks.onAddPage());
-
-    this.container.createDiv({ cls: "inkwell-toolbar-sep" });
-
     // ─── Tools ──────────────────────────────────
     const toolGroup = this.container.createDiv({ cls: "inkwell-toolbar-group" });
     this.addToolButton(toolGroup, "pen", "✏️", "Pen");

@@ -1,4 +1,4 @@
-import { PaperRenderer } from "./PaperRenderer";
+import { PaperRenderer, PAGE_HEIGHT } from "./PaperRenderer";
 import { StrokeRenderer } from "./StrokeRenderer";
 import { InputHandler } from "./InputHandler";
 import {
@@ -9,8 +9,6 @@ import {
   Viewport,
   generateStrokeId,
 } from "../model/types";
-
-const PAGE_HEIGHT = 1600;
 
 const TOOL_DEFAULTS: Record<ToolType, { color: string; width: number; opacity: number }> = {
   pen:         { color: "#1A1A2E", width: 2,  opacity: 1.0 },
@@ -46,7 +44,6 @@ export class InkCanvas {
     this.file = file;
     this.onDirty = onDirty;
 
-    // Default to single page height if not set
     if (this.file.canvas.height < PAGE_HEIGHT) {
       this.file.canvas.height = PAGE_HEIGHT;
     }
@@ -108,8 +105,6 @@ export class InkCanvas {
     this.renderStrokes();
   }
 
-  // ─── Tool Control ──────────────────────────────────────────
-
   setTool(tool: ToolType): void {
     this.currentTool = tool;
     this.inputHandler.setTool(tool);
@@ -127,20 +122,14 @@ export class InkCanvas {
     return this.currentTool;
   }
 
-  // ─── Page Management ───────────────────────────────────────
+  // ─── Auto-extend ──────────────────────────────────────────
 
-  addPage(): void {
-    this.file.canvas.height += PAGE_HEIGHT;
-    this.dirty = true;
-    this.onDirty();
-
-    // Scroll to the new page
-    const newPageTop = this.file.canvas.height - PAGE_HEIGHT;
-    this.viewport.scrollY = newPageTop;
-    this.file.canvas.scrollY = newPageTop;
-
-    this.renderBackground();
-    this.renderStrokes();
+  private maybeExtendCanvas(docY: number): void {
+    const bottomMargin = 300;
+    if (docY > this.file.canvas.height - bottomMargin) {
+      this.file.canvas.height += PAGE_HEIGHT;
+      this.renderBackground();
+    }
   }
 
   // ─── Drawing Handlers ─────────────────────────────────────
@@ -153,6 +142,8 @@ export class InkCanvas {
 
     const defaults = TOOL_DEFAULTS[tool];
     const docPoint: StrokePoint = [point[0], point[1] + this.viewport.scrollY, point[2], point[3]];
+
+    this.maybeExtendCanvas(docPoint[1]);
 
     this.currentStroke = {
       id,
@@ -174,6 +165,8 @@ export class InkCanvas {
 
     const docPoint: StrokePoint = [point[0], point[1] + this.viewport.scrollY, point[2], point[3]];
     this.currentStroke.points.push(docPoint);
+
+    this.maybeExtendCanvas(docPoint[1]);
 
     const ctx = this.activeCanvas.getContext("2d")!;
     ctx.clearRect(0, 0, this.viewport.width, this.viewport.height);
@@ -206,8 +199,6 @@ export class InkCanvas {
     this.renderStrokes();
   }
 
-  // ─── Eraser ────────────────────────────────────────────────
-
   private eraseAtPoint(point: StrokePoint): void {
     const [px, py] = point;
     const docY = py + this.viewport.scrollY;
@@ -230,8 +221,6 @@ export class InkCanvas {
     }
   }
 
-  // ─── Undo / Redo ──────────────────────────────────────────
-
   undo(): void {
     const stroke = this.file.strokes.pop();
     if (stroke) {
@@ -252,8 +241,6 @@ export class InkCanvas {
     }
   }
 
-  // ─── Rendering ─────────────────────────────────────────────
-
   private renderBackground(): void {
     const ctx = this.bgCanvas.getContext("2d")!;
     ctx.clearRect(0, 0, this.viewport.width, this.viewport.height);
@@ -265,8 +252,6 @@ export class InkCanvas {
     ctx.clearRect(0, 0, this.viewport.width, this.viewport.height);
     this.strokeRenderer.renderAll(ctx, this.file.strokes, this.viewport);
   }
-
-  // ─── Export ────────────────────────────────────────────────
 
   exportToPng(): string {
     const canvas = document.createElement("canvas");
@@ -285,8 +270,6 @@ export class InkCanvas {
     return canvas.toDataURL("image/png");
   }
 
-  // ─── State ─────────────────────────────────────────────────
-
   getFile(): InkwellFile {
     this.file.modified = new Date().toISOString();
     return this.file;
@@ -299,8 +282,6 @@ export class InkCanvas {
   markClean(): void {
     this.dirty = false;
   }
-
-  // ─── Cleanup ───────────────────────────────────────────────
 
   destroy(): void {
     this.inputHandler.destroy();

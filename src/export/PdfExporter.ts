@@ -1,6 +1,6 @@
 import { jsPDF } from "jspdf";
 import { InkwellFile, Viewport, Stroke } from "../model/types";
-import { PaperRenderer } from "../canvas/PaperRenderer";
+import { PaperRenderer, PAGE_HEIGHT } from "../canvas/PaperRenderer";
 import { StrokeRenderer } from "../canvas/StrokeRenderer";
 
 export class PdfExporter {
@@ -14,43 +14,61 @@ export class PdfExporter {
 
   exportToPdfBlob(file: InkwellFile): Blob {
     const pageWidth = file.canvas.width;
-    const pageHeight = 1600;
     const totalHeight = this.getContentHeight(file);
-    const numPages = Math.max(1, Math.ceil(totalHeight / pageHeight));
+    const totalPages = Math.max(1, Math.ceil(totalHeight / PAGE_HEIGHT));
 
-    const orientation = pageWidth > pageHeight ? "landscape" : "portrait";
+    // Find which pages have strokes
+    const usedPages = this.getUsedPages(file.strokes, totalPages);
+
+    const orientation = pageWidth > PAGE_HEIGHT ? "landscape" : "portrait";
     const doc = new jsPDF({
       orientation,
       unit: "px",
-      format: [pageWidth, pageHeight],
+      format: [pageWidth, PAGE_HEIGHT],
       compress: true,
     });
 
-    for (let page = 0; page < numPages; page++) {
-      if (page > 0) doc.addPage([pageWidth, pageHeight], orientation);
+    let firstPage = true;
+    for (const pageIdx of usedPages) {
+      if (!firstPage) doc.addPage([pageWidth, PAGE_HEIGHT], orientation);
+      firstPage = false;
 
       const canvas = document.createElement("canvas");
       canvas.width = pageWidth;
-      canvas.height = pageHeight;
+      canvas.height = PAGE_HEIGHT;
       const ctx = canvas.getContext("2d")!;
 
-      // Background: render as fresh sheet (scrollY=0) so every page has margin
-      const bgVp: Viewport = { width: pageWidth, height: pageHeight, scrollY: 0 };
+      // Fresh paper background for every page (scrollY=0 gives top margin)
+      const bgVp: Viewport = { width: pageWidth, height: PAGE_HEIGHT, scrollY: 0 };
       this.paperRenderer.render(ctx, file.paper, bgVp);
 
-      // Strokes: render with actual scroll offset for this page
-      const strokeVp: Viewport = { width: pageWidth, height: pageHeight, scrollY: page * pageHeight };
+      // Strokes offset for this page
+      const strokeVp: Viewport = { width: pageWidth, height: PAGE_HEIGHT, scrollY: pageIdx * PAGE_HEIGHT };
       this.strokeRenderer.renderAll(ctx, file.strokes, strokeVp);
 
       const imgData = canvas.toDataURL("image/png");
-      doc.addImage(imgData, "PNG", 0, 0, pageWidth, pageHeight);
+      doc.addImage(imgData, "PNG", 0, 0, pageWidth, PAGE_HEIGHT);
     }
 
     return doc.output("blob");
   }
 
+  private getUsedPages(strokes: Stroke[], totalPages: number): number[] {
+    if (strokes.length === 0) return [0]; // At least one page
+
+    const pages = new Set<number>();
+    for (const stroke of strokes) {
+      for (const [, y] of stroke.points) {
+        const page = Math.floor(y / PAGE_HEIGHT);
+        pages.add(page);
+      }
+    }
+
+    return Array.from(pages).sort((a, b) => a - b);
+  }
+
   private getContentHeight(file: InkwellFile): number {
-    if (file.strokes.length === 0) return 1600; // Single page if empty
+    if (file.strokes.length === 0) return PAGE_HEIGHT;
 
     let maxY = 0;
     for (const stroke of file.strokes) {
@@ -58,6 +76,6 @@ export class PdfExporter {
         if (y > maxY) maxY = y;
       }
     }
-    return Math.max(maxY + 200, 1600);
+    return Math.max(maxY + 200, PAGE_HEIGHT);
   }
 }

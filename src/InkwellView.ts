@@ -22,17 +22,9 @@ export class InkwellView extends TextFileView {
     this.pdfExporter = new PdfExporter();
   }
 
-  getViewType(): string {
-    return INKWELL_VIEW_TYPE;
-  }
-
-  getDisplayText(): string {
-    return this.file?.basename ?? "Inkwell Note";
-  }
-
-  getIcon(): string {
-    return "pencil";
-  }
+  getViewType(): string { return INKWELL_VIEW_TYPE; }
+  getDisplayText(): string { return this.file?.basename ?? "Inkwell Note"; }
+  getIcon(): string { return "pencil"; }
 
   async onOpen(): Promise<void> {
     const { contentEl } = this;
@@ -40,9 +32,7 @@ export class InkwellView extends TextFileView {
     contentEl.addClass("inkwell-root");
   }
 
-  async onClose(): Promise<void> {
-    this.destroyCanvas();
-  }
+  async onClose(): Promise<void> { this.destroyCanvas(); }
 
   getViewData(): string {
     if (this.fileData && this.inkCanvas) {
@@ -61,9 +51,7 @@ export class InkwellView extends TextFileView {
       this.fileData = createDefaultFile("ruled");
     }
 
-    if (clear) {
-      this.destroyCanvas();
-    }
+    if (clear) this.destroyCanvas();
     this.buildUI();
   }
 
@@ -88,7 +76,6 @@ export class InkwellView extends TextFileView {
       onRedo: () => this.inkCanvas?.redo(),
       onExportPng: () => this.exportPng(),
       onExportPdf: () => this.exportPdf(),
-      onAddPage: () => this.inkCanvas?.addPage(),
     });
 
     this.canvasContainer = contentEl.createDiv({ cls: "inkwell-canvas-container" });
@@ -112,42 +99,26 @@ export class InkwellView extends TextFileView {
 
   private onKeyDown(e: KeyboardEvent): void {
     const mod = e.metaKey || e.ctrlKey;
-
-    if (mod && e.key === "z" && !e.shiftKey) {
-      e.preventDefault();
-      this.inkCanvas?.undo();
-    } else if (mod && e.key === "z" && e.shiftKey) {
-      e.preventDefault();
-      this.inkCanvas?.redo();
-    } else if (mod && e.key === "y") {
-      e.preventDefault();
-      this.inkCanvas?.redo();
-    }
+    if (mod && e.key === "z" && !e.shiftKey) { e.preventDefault(); this.inkCanvas?.undo(); }
+    else if (mod && e.key === "z" && e.shiftKey) { e.preventDefault(); this.inkCanvas?.redo(); }
+    else if (mod && e.key === "y") { e.preventDefault(); this.inkCanvas?.redo(); }
   }
 
   private async exportPng(): Promise<void> {
     if (!this.inkCanvas || !this.file) return;
-
     try {
       const dataUrl = this.inkCanvas.exportToPng();
       const base64 = dataUrl.split(",")[1];
       const binary = atob(base64);
       const bytes = new Uint8Array(binary.length);
-      for (let i = 0; i < binary.length; i++) {
-        bytes[i] = binary.charCodeAt(i);
-      }
+      for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
 
       const folder = this.file.parent?.path ?? "";
-      const pngPath = folder
-        ? `${folder}/${this.file.basename}.png`
-        : `${this.file.basename}.png`;
+      const pngPath = folder ? `${folder}/${this.file.basename}.png` : `${this.file.basename}.png`;
 
       const existing = this.app.vault.getAbstractFileByPath(pngPath);
-      if (existing instanceof TFile) {
-        await this.app.vault.modifyBinary(existing, bytes.buffer);
-      } else {
-        await this.app.vault.createBinary(pngPath, bytes.buffer);
-      }
+      if (existing instanceof TFile) await this.app.vault.modifyBinary(existing, bytes.buffer);
+      else await this.app.vault.createBinary(pngPath, bytes.buffer);
 
       new Notice(`Saved ${this.file.basename}.png`);
     } catch (err) {
@@ -158,24 +129,17 @@ export class InkwellView extends TextFileView {
 
   private async exportPdf(): Promise<void> {
     if (!this.fileData || !this.file) return;
-
     try {
       new Notice("Generating PDF...");
       const blob = this.pdfExporter.exportToPdfBlob(this.fileData);
-
       const buffer = await blob.arrayBuffer();
 
       const folder = this.file.parent?.path ?? "";
-      const pdfPath = folder
-        ? `${folder}/${this.file.basename}.pdf`
-        : `${this.file.basename}.pdf`;
+      const pdfPath = folder ? `${folder}/${this.file.basename}.pdf` : `${this.file.basename}.pdf`;
 
       const existing = this.app.vault.getAbstractFileByPath(pdfPath);
-      if (existing instanceof TFile) {
-        await this.app.vault.modifyBinary(existing, buffer);
-      } else {
-        await this.app.vault.createBinary(pdfPath, buffer);
-      }
+      if (existing instanceof TFile) await this.app.vault.modifyBinary(existing, buffer);
+      else await this.app.vault.createBinary(pdfPath, buffer);
 
       new Notice(`Saved ${this.file.basename}.pdf`);
     } catch (err) {
