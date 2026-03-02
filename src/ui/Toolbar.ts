@@ -23,7 +23,7 @@ export interface ToolbarCallbacks {
   onRedo: () => void;
   onExportPng: () => void;
   onExportPdf: () => void;
-  onPrint: () => void;
+  onAddPage: () => void;
 }
 
 export class Toolbar {
@@ -40,6 +40,13 @@ export class Toolbar {
   }
 
   private build(): void {
+    // ─── Add Page ───────────────────────────────
+    const pageGroup = this.container.createDiv({ cls: "inkwell-toolbar-group" });
+    const addPageBtn = pageGroup.createEl("button", { cls: "inkwell-tool-btn", text: "➕", attr: { "aria-label": "Add Page" } });
+    addPageBtn.addEventListener("click", () => this.callbacks.onAddPage());
+
+    this.container.createDiv({ cls: "inkwell-toolbar-sep" });
+
     // ─── Tools ──────────────────────────────────
     const toolGroup = this.container.createDiv({ cls: "inkwell-toolbar-group" });
     this.addToolButton(toolGroup, "pen", "✏️", "Pen");
@@ -106,9 +113,6 @@ export class Toolbar {
 
     const pdfBtn = exportGroup.createEl("button", { cls: "inkwell-tool-btn", text: "📄", attr: { "aria-label": "Export PDF" } });
     pdfBtn.addEventListener("click", () => this.callbacks.onExportPdf());
-
-    const printBtn = exportGroup.createEl("button", { cls: "inkwell-tool-btn", text: "🖨️", attr: { "aria-label": "Print" } });
-    printBtn.addEventListener("click", () => this.callbacks.onPrint());
   }
 
   private addToolButton(group: HTMLElement, tool: ToolType, icon: string, label: string): void {

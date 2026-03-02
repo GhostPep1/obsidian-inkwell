@@ -10,7 +10,7 @@ import {
   generateStrokeId,
 } from "../model/types";
 
-// ─── Tool Defaults ─────────────────────────────────────────────
+const PAGE_HEIGHT = 1600;
 
 const TOOL_DEFAULTS: Record<ToolType, { color: string; width: number; opacity: number }> = {
   pen:         { color: "#1A1A2E", width: 2,  opacity: 1.0 },
@@ -19,38 +19,38 @@ const TOOL_DEFAULTS: Record<ToolType, { color: string; width: number; opacity: n
 };
 
 export class InkCanvas {
-  // DOM
   private container: HTMLElement;
   private bgCanvas: HTMLCanvasElement;
   private strokeCanvas: HTMLCanvasElement;
   private activeCanvas: HTMLCanvasElement;
 
-  // Renderers
   private paperRenderer: PaperRenderer;
   private strokeRenderer: StrokeRenderer;
   private inputHandler: InputHandler;
 
-  // State
   private file: InkwellFile;
   private viewport: Viewport;
   private currentStroke: Stroke | null = null;
   private undoStack: Stroke[] = [];
   private dirty = false;
 
-  // Callbacks
   private onDirty: () => void;
 
-  // Tool state
   private currentTool: ToolType = "pen";
   private penColor = "#1A1A2E";
   private penWidth = 2;
+  private resizeObserver: ResizeObserver;
 
   constructor(container: HTMLElement, file: InkwellFile, onDirty: () => void) {
     this.container = container;
     this.file = file;
     this.onDirty = onDirty;
 
-    // Create three layered canvases
+    // Default to single page height if not set
+    if (this.file.canvas.height < PAGE_HEIGHT) {
+      this.file.canvas.height = PAGE_HEIGHT;
+    }
+
     this.bgCanvas = this.createCanvas("inkwell-bg");
     this.strokeCanvas = this.createCanvas("inkwell-strokes");
     this.activeCanvas = this.createCanvas("inkwell-active");
@@ -71,19 +71,13 @@ export class InkCanvas {
       onScroll: this.handleScroll.bind(this),
     });
 
-    // Initial render
     this.resize();
     this.renderBackground();
     this.renderStrokes();
 
-    // Watch for container resize
     this.resizeObserver = new ResizeObserver(() => this.resize());
     this.resizeObserver.observe(container);
   }
-
-  private resizeObserver: ResizeObserver;
-
-  // ─── Canvas Setup ──────────────────────────────────────────
 
   private createCanvas(className: string): HTMLCanvasElement {
     const canvas = document.createElement("canvas");
@@ -133,17 +127,31 @@ export class InkCanvas {
     return this.currentTool;
   }
 
+  // ─── Page Management ───────────────────────────────────────
+
+  addPage(): void {
+    this.file.canvas.height += PAGE_HEIGHT;
+    this.dirty = true;
+    this.onDirty();
+
+    // Scroll to the new page
+    const newPageTop = this.file.canvas.height - PAGE_HEIGHT;
+    this.viewport.scrollY = newPageTop;
+    this.file.canvas.scrollY = newPageTop;
+
+    this.renderBackground();
+    this.renderStrokes();
+  }
+
   // ─── Drawing Handlers ─────────────────────────────────────
 
   private handleStrokeStart(id: string, tool: ToolType, point: StrokePoint): void {
     if (tool === "eraser") {
-      // Eraser: check if point hits any stroke
       this.eraseAtPoint(point);
       return;
     }
 
     const defaults = TOOL_DEFAULTS[tool];
-    // Point Y needs to be in document space (add scrollY)
     const docPoint: StrokePoint = [point[0], point[1] + this.viewport.scrollY, point[2], point[3]];
 
     this.currentStroke = {
@@ -167,7 +175,6 @@ export class InkCanvas {
     const docPoint: StrokePoint = [point[0], point[1] + this.viewport.scrollY, point[2], point[3]];
     this.currentStroke.points.push(docPoint);
 
-    // Render current stroke on the active layer
     const ctx = this.activeCanvas.getContext("2d")!;
     ctx.clearRect(0, 0, this.viewport.width, this.viewport.height);
     this.strokeRenderer.renderStroke(ctx, this.currentStroke, this.viewport);
@@ -176,19 +183,14 @@ export class InkCanvas {
   private handleStrokeEnd(): void {
     if (!this.currentStroke) return;
 
-    // Only save strokes with enough points to be visible
     if (this.currentStroke.points.length >= 2) {
       this.file.strokes.push(this.currentStroke);
-      this.undoStack = []; // Clear redo stack on new stroke
+      this.undoStack = [];
       this.dirty = true;
-
-      // Auto-extend canvas height if writing near bottom
-      this.maybeExtendCanvas();
     }
 
     this.currentStroke = null;
 
-    // Clear active layer and redraw strokes layer
     const actCtx = this.activeCanvas.getContext("2d")!;
     actCtx.clearRect(0, 0, this.viewport.width, this.viewport.height);
     this.renderStrokes();
@@ -221,7 +223,7 @@ export class InkCanvas {
 
     if (idx >= 0) {
       const removed = this.file.strokes.splice(idx, 1)[0];
-      this.undoStack.push(removed); // Can redo erased strokes
+      this.undoStack.push(removed);
       this.dirty = true;
       this.renderStrokes();
       this.onDirty();
@@ -264,27 +266,14 @@ export class InkCanvas {
     this.strokeRenderer.renderAll(ctx, this.file.strokes, this.viewport);
   }
 
-  // ─── Canvas Growth ─────────────────────────────────────────
-
-  private maybeExtendCanvas(): void {
-    if (!this.currentStroke) return;
-    const lastPoint = this.currentStroke.points[this.currentStroke.points.length - 1];
-    const bottomMargin = 200;
-    if (lastPoint[1] > this.file.canvas.height - bottomMargin) {
-      this.file.canvas.height += 800; // Grow by 800px
-    }
-  }
-
   // ─── Export ────────────────────────────────────────────────
 
   exportToPng(): string {
-    // Render everything to a single offscreen canvas
     const canvas = document.createElement("canvas");
     canvas.width = this.file.canvas.width;
     canvas.height = this.file.canvas.height;
     const ctx = canvas.getContext("2d")!;
 
-    // Render full document (no viewport clipping)
     const fullVp: Viewport = {
       width: this.file.canvas.width,
       height: this.file.canvas.height,

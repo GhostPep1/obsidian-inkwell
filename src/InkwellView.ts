@@ -88,7 +88,7 @@ export class InkwellView extends TextFileView {
       onRedo: () => this.inkCanvas?.redo(),
       onExportPng: () => this.exportPng(),
       onExportPdf: () => this.exportPdf(),
-      onPrint: () => this.exportPdf(),
+      onAddPage: () => this.inkCanvas?.addPage(),
     });
 
     this.canvasContainer = contentEl.createDiv({ cls: "inkwell-canvas-container" });
@@ -130,7 +130,6 @@ export class InkwellView extends TextFileView {
 
     try {
       const dataUrl = this.inkCanvas.exportToPng();
-      // Convert data URL to binary
       const base64 = dataUrl.split(",")[1];
       const binary = atob(base64);
       const bytes = new Uint8Array(binary.length);
@@ -138,7 +137,6 @@ export class InkwellView extends TextFileView {
         bytes[i] = binary.charCodeAt(i);
       }
 
-      // Save next to the .inkwell file
       const folder = this.file.parent?.path ?? "";
       const pngPath = folder
         ? `${folder}/${this.file.basename}.png`
@@ -165,10 +163,8 @@ export class InkwellView extends TextFileView {
       new Notice("Generating PDF...");
       const blob = this.pdfExporter.exportToPdfBlob(this.fileData);
 
-      // Convert blob to ArrayBuffer
       const buffer = await blob.arrayBuffer();
 
-      // Save next to the .inkwell file
       const folder = this.file.parent?.path ?? "";
       const pdfPath = folder
         ? `${folder}/${this.file.basename}.pdf`
