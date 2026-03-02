@@ -27,6 +27,8 @@ const TEXT_DEFAULTS = {
   align: "left" as const,
 };
 
+const DRAG_THRESHOLD = 8; // px before tap becomes drag
+
 export class InkCanvas {
   private container: HTMLElement;
   private bgCanvas: HTMLCanvasElement;
@@ -56,6 +58,20 @@ export class InkCanvas {
   private activeTextarea: HTMLTextAreaElement | null = null;
   private editingTextId: string | null = null;
 
+  // Drag state
+  private dragTarget: TextObject | null = null;
+  private dragStartX = 0;
+  private dragStartY = 0;
+  private dragObjStartX = 0;
+  private dragObjStartY = 0;
+  private isDragging = false;
+  private pointerDownTime = 0;
+
+  // Bound handlers for cleanup
+  private boundPointerDown: (e: PointerEvent) => void;
+  private boundPointerMove: (e: PointerEvent) => void;
+  private boundPointerUp: (e: PointerEvent) => void;
+
   constructor(container: HTMLElement, file: InkwellFile, onDirty: () => void) {
     this.container = container;
     this.file = file;
@@ -68,7 +84,6 @@ export class InkCanvas {
     this.bgCanvas = this.createCanvas("inkwell-bg");
     this.strokeCanvas = this.createCanvas("inkwell-strokes");
 
-    // DOM overlay layer for text editing (between stroke and active canvas)
     this.overlayLayer = document.createElement("div");
     this.overlayLayer.addClass("inkwell-overlay");
     this.container.appendChild(this.overlayLayer);
@@ -91,8 +106,14 @@ export class InkCanvas {
       onScroll: this.handleScroll.bind(this),
     });
 
-    // Handle taps for text mode
-    this.activeCanvas.addEventListener("pointerup", this.handleTap.bind(this));
+    // Text mode pointer handlers
+    this.boundPointerDown = this.handlePointerDown.bind(this);
+    this.boundPointerMove = this.handlePointerMove.bind(this);
+    this.boundPointerUp = this.handlePointerUp.bind(this);
+
+    this.activeCanvas.addEventListener("pointerdown", this.boundPointerDown);
+    this.activeCanvas.addEventListener("pointermove", this.boundPointerMove);
+    this.activeCanvas.addEventListener("pointerup", this.boundPointerUp);
 
     this.resize();
     this.renderBackground();
@@ -134,12 +155,9 @@ export class InkCanvas {
   // ─── Mode & Tool Control ───────────────────────────────────
 
   setMode(mode: InteractionMode): void {
-    // Commit any active text before switching
     if (this.activeTextarea) this.commitText();
-
     this.mode = mode;
     if (mode === "text") {
-      this.activeCanvas.style.pointerEvents = "auto";
       this.activeCanvas.style.cursor = "text";
     } else {
       this.activeCanvas.style.cursor = "crosshair";
@@ -153,31 +171,85 @@ export class InkCanvas {
     this.activeCanvas.style.cursor = "crosshair";
   }
 
-  setColor(color: string): void {
-    this.penColor = color;
-  }
+  setColor(color: string): void { this.penColor = color; }
+  setWidth(width: number): void { this.penWidth = width; }
+  getTool(): ToolType { return this.currentTool; }
 
-  setWidth(width: number): void {
-    this.penWidth = width;
-  }
+  // ─── Pointer Handling (text mode: tap vs drag) ─────────────
 
-  getTool(): ToolType {
-    return this.currentTool;
-  }
-
-  // ─── Text Handling ─────────────────────────────────────────
-
-  private handleTap(e: PointerEvent): void {
-    if (this.mode !== "text") return;
-    if (e.pointerType === "touch") return; // Ignore finger in text mode too
-
+  private getDocCoords(e: PointerEvent): { screenX: number; screenY: number; docX: number; docY: number } {
     const rect = this.activeCanvas.getBoundingClientRect();
     const screenX = e.clientX - rect.left;
     const screenY = e.clientY - rect.top;
-    const docX = screenX;
-    const docY = screenY + this.viewport.scrollY;
+    return {
+      screenX,
+      screenY,
+      docX: screenX,
+      docY: screenY + this.viewport.scrollY,
+    };
+  }
 
-    // Check if tapping existing text
+  private handlePointerDown(e: PointerEvent): void {
+    if (this.mode !== "text") return;
+    if (e.pointerType === "touch") return;
+
+    const { screenX, screenY, docX, docY } = this.getDocCoords(e);
+    const hitText = this.findTextAt(docX, docY);
+
+    if (hitText) {
+      // Potential drag — record start
+      this.dragTarget = hitText;
+      this.dragStartX = screenX;
+      this.dragStartY = screenY;
+      this.dragObjStartX = hitText.x;
+      this.dragObjStartY = hitText.y;
+      this.isDragging = false;
+      this.pointerDownTime = Date.now();
+      e.preventDefault();
+    }
+  }
+
+  private handlePointerMove(e: PointerEvent): void {
+    if (this.mode !== "text" || !this.dragTarget) return;
+
+    const { screenX, screenY } = this.getDocCoords(e);
+    const dx = screenX - this.dragStartX;
+    const dy = screenY - this.dragStartY;
+
+    if (!this.isDragging && (Math.abs(dx) > DRAG_THRESHOLD || Math.abs(dy) > DRAG_THRESHOLD)) {
+      this.isDragging = true;
+      this.activeCanvas.style.cursor = "grabbing";
+    }
+
+    if (this.isDragging) {
+      this.dragTarget.x = this.dragObjStartX + dx;
+      this.dragTarget.y = this.dragObjStartY + dy;
+      this.file.objects[this.dragTarget.id] = this.dragTarget;
+      this.renderAll();
+    }
+  }
+
+  private handlePointerUp(e: PointerEvent): void {
+    if (this.mode !== "text") return;
+    if (e.pointerType === "touch") return;
+
+    const { screenX, screenY, docX, docY } = this.getDocCoords(e);
+
+    if (this.dragTarget && this.isDragging) {
+      // Finished drag — commit position
+      this.dirty = true;
+      this.onDirty();
+      this.dragTarget = null;
+      this.isDragging = false;
+      this.activeCanvas.style.cursor = "text";
+      this.renderAll();
+      return;
+    }
+
+    // It was a tap, not a drag
+    this.dragTarget = null;
+    this.isDragging = false;
+
     const hitText = this.findTextAt(docX, docY);
     if (hitText) {
       this.editExistingText(hitText);
@@ -186,11 +258,12 @@ export class InkCanvas {
     }
   }
 
+  // ─── Text CRUD ─────────────────────────────────────────────
+
   private findTextAt(docX: number, docY: number): TextObject | null {
     const texts = Object.values(this.file.objects).filter(
       (o): o is TextObject => o.type === "text"
     );
-    // Search in reverse order (top objects first)
     for (let i = texts.length - 1; i >= 0; i--) {
       const t = texts[i];
       if (docX >= t.x && docX <= t.x + t.width &&
@@ -231,8 +304,6 @@ export class InkCanvas {
     const screenY = textObj.y - this.viewport.scrollY;
 
     this.editingTextId = textObj.id;
-
-    // Hide from canvas while editing
     this.renderAll();
 
     this.spawnTextarea(textObj, screenX, screenY);
@@ -262,16 +333,13 @@ export class InkCanvas {
     ta.style.lineHeight = "1.4";
     ta.style.boxSizing = "border-box";
 
-    // Auto-grow height
     ta.addEventListener("input", () => {
       ta.style.height = "auto";
       ta.style.height = `${ta.scrollHeight}px`;
     });
 
-    // Commit on blur
     ta.addEventListener("blur", () => this.commitText());
 
-    // Commit on Escape, allow Enter for newlines
     ta.addEventListener("keydown", (e: KeyboardEvent) => {
       if (e.key === "Escape") {
         e.preventDefault();
@@ -281,8 +349,6 @@ export class InkCanvas {
 
     this.overlayLayer.appendChild(ta);
     this.activeTextarea = ta;
-
-    // CRITICAL: synchronous focus for iPad keyboard
     ta.focus();
   }
 
@@ -320,7 +386,6 @@ export class InkCanvas {
       this.dirty = true;
       this.onDirty();
     } else {
-      // Empty text — remove if it existed
       delete this.file.objects[this.editingTextId];
     }
 
@@ -420,7 +485,6 @@ export class InkCanvas {
     this.viewport.scrollY = Math.max(0, Math.min(maxScroll, this.viewport.scrollY + deltaY));
     this.file.canvas.scrollY = this.viewport.scrollY;
 
-    // Move active textarea if scrolling
     if (this.activeTextarea && this.editingTextId) {
       const obj = this.file.objects[this.editingTextId] as TextObject;
       if (obj) {
@@ -437,7 +501,6 @@ export class InkCanvas {
     const docY = py + this.viewport.scrollY;
     const hitRadius = 15;
 
-    // Check strokes
     const strokes = getStrokes(this.file);
     const hit = strokes.find((stroke) =>
       stroke.points.some(([sx, sy]) => {
@@ -456,7 +519,6 @@ export class InkCanvas {
       return;
     }
 
-    // Check text objects
     const textHit = this.findTextAt(px, docY);
     if (textHit) {
       delete this.file.objects[textHit.id];
@@ -501,11 +563,8 @@ export class InkCanvas {
     const ctx = this.strokeCanvas.getContext("2d")!;
     ctx.clearRect(0, 0, this.viewport.width, this.viewport.height);
 
-    // Render strokes
     const strokes = getStrokes(this.file);
     this.strokeRenderer.renderAll(ctx, strokes, this.viewport);
-
-    // Render text objects
     this.renderTextObjects(ctx);
   }
 
@@ -515,10 +574,8 @@ export class InkCanvas {
     );
 
     for (const t of texts) {
-      // Skip text currently being edited
       if (t.id === this.editingTextId) continue;
 
-      // Viewport culling
       if (t.y + t.height < this.viewport.scrollY - 50) continue;
       if (t.y > this.viewport.scrollY + this.viewport.height + 50) continue;
 
@@ -530,11 +587,19 @@ export class InkCanvas {
       ctx.textAlign = t.align as CanvasTextAlign;
       ctx.textBaseline = "top";
 
-      // Word wrap
+      // Subtle highlight when in text mode (shows it's tappable/draggable)
+      if (this.mode === "text") {
+        ctx.strokeStyle = "rgba(37, 99, 235, 0.3)";
+        ctx.lineWidth = 1;
+        ctx.setLineDash([4, 4]);
+        ctx.strokeRect(t.x, screenY, t.width, t.height);
+        ctx.setLineDash([]);
+      }
+
       const lines = this.wrapText(ctx, t.content, t.width - 12);
       const lineHeight = t.fontSize * 1.4;
 
-      let textX = t.x + 6; // padding
+      let textX = t.x + 6;
       if (t.align === "center") textX = t.x + t.width / 2;
       else if (t.align === "right") textX = t.x + t.width - 6;
 
@@ -551,11 +616,7 @@ export class InkCanvas {
     const lines: string[] = [];
 
     for (const para of paragraphs) {
-      if (para === "") {
-        lines.push("");
-        continue;
-      }
-
+      if (para === "") { lines.push(""); continue; }
       const words = para.split(" ");
       let currentLine = words[0] || "";
 
@@ -591,34 +652,33 @@ export class InkCanvas {
     const strokes = getStrokes(this.file);
     this.strokeRenderer.renderAll(ctx, strokes, fullVp);
 
-    // Render text to export canvas
     const savedScrollY = this.viewport.scrollY;
+    const savedMode = this.mode;
     this.viewport.scrollY = 0;
+    this.mode = "draw"; // Hide selection outlines in export
     this.renderTextObjects(ctx);
     this.viewport.scrollY = savedScrollY;
+    this.mode = savedMode;
 
     return canvas.toDataURL("image/png");
   }
 
   getFile(): InkwellFile {
-    // Commit any active text before saving
     if (this.activeTextarea) this.commitText();
     this.file.modified = new Date().toISOString();
     return this.file;
   }
 
-  isDirty(): boolean {
-    return this.dirty;
-  }
-
-  markClean(): void {
-    this.dirty = false;
-  }
+  isDirty(): boolean { return this.dirty; }
+  markClean(): void { this.dirty = false; }
 
   destroy(): void {
     if (this.activeTextarea) this.commitText();
     this.inputHandler.destroy();
     this.resizeObserver.disconnect();
+    this.activeCanvas.removeEventListener("pointerdown", this.boundPointerDown);
+    this.activeCanvas.removeEventListener("pointermove", this.boundPointerMove);
+    this.activeCanvas.removeEventListener("pointerup", this.boundPointerUp);
     this.bgCanvas.remove();
     this.strokeCanvas.remove();
     this.activeCanvas.remove();
