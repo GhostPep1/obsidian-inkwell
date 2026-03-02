@@ -1,6 +1,6 @@
 import { TextFileView, WorkspaceLeaf, TFile, Notice } from "obsidian";
 import { InkCanvas } from "./canvas/InkCanvas";
-import { Toolbar } from "./ui/Toolbar";
+import { Toolbar, InteractionMode } from "./ui/Toolbar";
 import { PdfExporter } from "./export/PdfExporter";
 import { InkwellFile, createDefaultFile, ToolType, migrateV1 } from "./model/types";
 import type InkwellPlugin from "./main";
@@ -44,22 +44,15 @@ export class InkwellView extends TextFileView {
   setViewData(data: string, clear: boolean): void {
     try {
       const parsed = JSON.parse(data);
-
-      // Auto-migrate v1 files
       if (parsed.strokes && !parsed.objects) {
         this.fileData = migrateV1(parsed);
-        // Trigger save so the file gets updated on disk
         setTimeout(() => this.requestSave(), 500);
       } else {
         this.fileData = parsed as InkwellFile;
       }
-
-      // Ensure paper marginTop exists
       if (this.fileData.paper.marginTop === undefined) {
         this.fileData.paper.marginTop = this.fileData.paper.type === "ruled" ? 64 : 28;
       }
-
-      // Ensure assets exists
       if (!this.fileData.assets) {
         this.fileData.assets = {};
       }
@@ -92,6 +85,7 @@ export class InkwellView extends TextFileView {
       onRedo: () => this.inkCanvas?.redo(),
       onExportPng: () => this.exportPng(),
       onExportPdf: () => this.exportPdf(),
+      onModeChange: (mode: InteractionMode) => this.inkCanvas?.setMode(mode),
     });
 
     this.canvasContainer = contentEl.createDiv({ cls: "inkwell-canvas-container" });

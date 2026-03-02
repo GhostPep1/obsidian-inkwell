@@ -15,6 +15,8 @@ const WIDTHS = [
   { name: "Bold",   value: 8 },
 ];
 
+export type InteractionMode = "draw" | "text";
+
 export interface ToolbarCallbacks {
   onToolChange: (tool: ToolType) => void;
   onColorChange: (color: string) => void;
@@ -23,6 +25,7 @@ export interface ToolbarCallbacks {
   onRedo: () => void;
   onExportPng: () => void;
   onExportPdf: () => void;
+  onModeChange: (mode: InteractionMode) => void;
 }
 
 export class Toolbar {
@@ -31,6 +34,8 @@ export class Toolbar {
   private activeTool: ToolType = "pen";
   private activeColor = COLORS[0].value;
   private activeWidth = WIDTHS[1].value;
+  private activeMode: InteractionMode = "draw";
+  private modeButtons: Map<InteractionMode, HTMLElement> = new Map();
 
   constructor(parent: HTMLElement, callbacks: ToolbarCallbacks) {
     this.callbacks = callbacks;
@@ -39,6 +44,21 @@ export class Toolbar {
   }
 
   private build(): void {
+    // ─── Mode: Draw / Text ──────────────────────
+    const modeGroup = this.container.createDiv({ cls: "inkwell-toolbar-group" });
+
+    const drawBtn = modeGroup.createEl("button", { cls: "inkwell-tool-btn is-active", text: "🖊️", attr: { "aria-label": "Draw Mode" } });
+    this.modeButtons.set("draw", drawBtn);
+    drawBtn.addEventListener("click", () => this.setMode("draw"));
+
+    const textBtn = modeGroup.createEl("button", { cls: "inkwell-tool-btn", text: "T", attr: { "aria-label": "Text Mode" } });
+    textBtn.style.fontWeight = "bold";
+    textBtn.style.fontSize = "18px";
+    this.modeButtons.set("text", textBtn);
+    textBtn.addEventListener("click", () => this.setMode("text"));
+
+    this.container.createDiv({ cls: "inkwell-toolbar-sep" });
+
     // ─── Tools ──────────────────────────────────
     const toolGroup = this.container.createDiv({ cls: "inkwell-toolbar-group" });
     this.addToolButton(toolGroup, "pen", "✏️", "Pen");
@@ -107,6 +127,15 @@ export class Toolbar {
     pdfBtn.addEventListener("click", () => this.callbacks.onExportPdf());
   }
 
+  private setMode(mode: InteractionMode): void {
+    this.activeMode = mode;
+    this.modeButtons.forEach((btn, m) => {
+      if (m === mode) btn.addClass("is-active");
+      else btn.removeClass("is-active");
+    });
+    this.callbacks.onModeChange(mode);
+  }
+
   private addToolButton(group: HTMLElement, tool: ToolType, icon: string, label: string): void {
     const btn = group.createEl("button", {
       cls: "inkwell-tool-btn",
@@ -120,6 +149,8 @@ export class Toolbar {
       btn.addClass("is-active");
       this.activeTool = tool;
       this.callbacks.onToolChange(tool);
+      // Switch back to draw mode when picking a draw tool
+      this.setMode("draw");
     });
   }
 
