@@ -1,0 +1,9 @@
+{
+  "id": "obsidian-inkwell",
+  "name": "Inkwell",
+  "version": "0.1.0",
+  "minAppVersion": "1.4.0",
+  "description": "Native handwritten notes with ruled paper backgrounds and Apple Pencil support",
+  "author": "GhostPepper",
+  "isDesktopOnly": false
+}
