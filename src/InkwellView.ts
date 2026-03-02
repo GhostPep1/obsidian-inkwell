@@ -54,7 +54,6 @@ export class InkwellView extends TextFileView {
   setViewData(data: string, clear: boolean): void {
     try {
       this.fileData = JSON.parse(data) as InkwellFile;
-      // Migrate old files without marginTop
       if (this.fileData.paper.marginTop === undefined) {
         this.fileData.paper.marginTop = this.fileData.paper.type === "ruled" ? 64 : 28;
       }
@@ -89,7 +88,7 @@ export class InkwellView extends TextFileView {
       onRedo: () => this.inkCanvas?.redo(),
       onExportPng: () => this.exportPng(),
       onExportPdf: () => this.exportPdf(),
-      onPrint: () => this.printNote(),
+      onPrint: () => this.exportPdf(),
     });
 
     this.canvasContainer = contentEl.createDiv({ cls: "inkwell-canvas-container" });
@@ -123,51 +122,70 @@ export class InkwellView extends TextFileView {
     } else if (mod && e.key === "y") {
       e.preventDefault();
       this.inkCanvas?.redo();
-    } else if (mod && e.key === "p") {
-      e.preventDefault();
-      this.printNote();
     }
   }
 
-  private exportPng(): void {
+  private async exportPng(): Promise<void> {
     if (!this.inkCanvas || !this.file) return;
-    const dataUrl = this.inkCanvas.exportToPng();
-    const link = document.createElement("a");
-    link.download = `${this.file.basename}.png`;
-    link.href = dataUrl;
-    link.click();
-    new Notice("Exported to PNG");
+
+    try {
+      const dataUrl = this.inkCanvas.exportToPng();
+      // Convert data URL to binary
+      const base64 = dataUrl.split(",")[1];
+      const binary = atob(base64);
+      const bytes = new Uint8Array(binary.length);
+      for (let i = 0; i < binary.length; i++) {
+        bytes[i] = binary.charCodeAt(i);
+      }
+
+      // Save next to the .inkwell file
+      const folder = this.file.parent?.path ?? "";
+      const pngPath = folder
+        ? `${folder}/${this.file.basename}.png`
+        : `${this.file.basename}.png`;
+
+      const existing = this.app.vault.getAbstractFileByPath(pngPath);
+      if (existing instanceof TFile) {
+        await this.app.vault.modifyBinary(existing, bytes.buffer);
+      } else {
+        await this.app.vault.createBinary(pngPath, bytes.buffer);
+      }
+
+      new Notice(`Saved ${this.file.basename}.png`);
+    } catch (err) {
+      new Notice(`PNG export failed: ${err}`);
+      console.error("Inkwell: PNG export failed", err);
+    }
   }
 
   private async exportPdf(): Promise<void> {
     if (!this.fileData || !this.file) return;
+
     try {
       new Notice("Generating PDF...");
-      await this.pdfExporter.exportToPdf(this.fileData, `${this.file.basename}.pdf`);
-      new Notice("Exported to PDF");
+      const blob = this.pdfExporter.exportToPdfBlob(this.fileData);
+
+      // Convert blob to ArrayBuffer
+      const buffer = await blob.arrayBuffer();
+
+      // Save next to the .inkwell file
+      const folder = this.file.parent?.path ?? "";
+      const pdfPath = folder
+        ? `${folder}/${this.file.basename}.pdf`
+        : `${this.file.basename}.pdf`;
+
+      const existing = this.app.vault.getAbstractFileByPath(pdfPath);
+      if (existing instanceof TFile) {
+        await this.app.vault.modifyBinary(existing, buffer);
+      } else {
+        await this.app.vault.createBinary(pdfPath, buffer);
+      }
+
+      new Notice(`Saved ${this.file.basename}.pdf`);
     } catch (err) {
       new Notice(`PDF export failed: ${err}`);
       console.error("Inkwell: PDF export failed", err);
     }
-  }
-
-  private printNote(): void {
-    if (!this.inkCanvas) return;
-    const dataUrl = this.inkCanvas.exportToPng();
-    const printWindow = window.open("", "_blank");
-    if (!printWindow) {
-      new Notice("Popup blocked — allow popups to print");
-      return;
-    }
-    printWindow.document.write(`
-      <html><head><title>Print Inkwell Note</title>
-      <style>
-        @media print { body { margin: 0; } img { width: 100%; height: auto; } }
-        body { margin: 0; display: flex; justify-content: center; }
-        img { max-width: 100%; }
-      </style></head>
-      <body><img src="${dataUrl}" onload="window.print(); window.close();" /></body></html>
-    `);
   }
 
   private destroyCanvas(): void {

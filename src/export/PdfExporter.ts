@@ -1,3 +1,4 @@
+import { jsPDF } from "jspdf";
 import { InkwellFile, Viewport } from "../model/types";
 import { PaperRenderer } from "../canvas/PaperRenderer";
 import { StrokeRenderer } from "../canvas/StrokeRenderer";
@@ -11,9 +12,7 @@ export class PdfExporter {
     this.strokeRenderer = new StrokeRenderer();
   }
 
-  async exportToPdf(file: InkwellFile, filename: string): Promise<void> {
-    const jsPDF = await this.loadJsPDF();
-
+  exportToPdfBlob(file: InkwellFile): Blob {
     const pageWidth = file.canvas.width;
     const pageHeight = 1600;
     const totalHeight = this.getContentHeight(file);
@@ -45,7 +44,7 @@ export class PdfExporter {
       doc.addImage(imgData, "PNG", 0, 0, pageWidth, pageHeight);
     }
 
-    doc.save(filename);
+    return doc.output("blob");
   }
 
   private getContentHeight(file: InkwellFile): number {
@@ -58,23 +57,5 @@ export class PdfExporter {
       }
     }
     return Math.max(maxY + 200, file.canvas.height);
-  }
-
-  private async loadJsPDF(): Promise<any> {
-    if ((window as any).jspdf) {
-      return (window as any).jspdf.jsPDF;
-    }
-
-    return new Promise((resolve, reject) => {
-      const script = document.createElement("script");
-      script.src = "https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.2/jspdf.umd.min.js";
-      script.onload = () => {
-        const jsPDF = (window as any).jspdf?.jsPDF;
-        if (jsPDF) resolve(jsPDF);
-        else reject(new Error("jsPDF failed to load"));
-      };
-      script.onerror = () => reject(new Error("Failed to load jsPDF script"));
-      document.head.appendChild(script);
-    });
   }
 }

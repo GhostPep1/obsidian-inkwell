@@ -7,7 +7,12 @@
     "dev": "node esbuild.config.mjs",
     "build": "tsc -noEmit -skipLibCheck && node esbuild.config.mjs production"
   },
-  "keywords": ["obsidian", "handwriting", "apple-pencil", "notes"],
+  "keywords": [
+    "obsidian",
+    "handwriting",
+    "apple-pencil",
+    "notes"
+  ],
   "license": "MIT",
   "devDependencies": {
     "@types/node": "^20.11.0",
@@ -17,6 +22,7 @@
     "typescript": "5.3.3"
   },
   "dependencies": {
+    "jspdf": "^4.2.0",
     "perfect-freehand": "^1.2.2"
   }
 }
