@@ -3,7 +3,6 @@ import { StrokeObject, Viewport } from "../model/types";
 export class StrokeRenderer {
   renderAll(ctx: CanvasRenderingContext2D, strokes: StrokeObject[], vp: Viewport): void {
     for (const stroke of strokes) {
-      // Simple viewport culling
       if (stroke.y + stroke.height < vp.scrollY - 50) continue;
       if (stroke.y > vp.scrollY + vp.height + 50) continue;
       this.renderStroke(ctx, stroke, vp);
@@ -29,8 +28,7 @@ export class StrokeRenderer {
     ctx.moveTo(x0, y0 - vp.scrollY);
 
     for (let i = 1; i < stroke.points.length; i++) {
-      const [x, y, pressure] = stroke.points[i];
-      ctx.lineWidth = stroke.strokeWidth * (0.5 + pressure * 0.5);
+      const [x, y] = stroke.points[i];
       ctx.lineTo(x, y - vp.scrollY);
     }
     ctx.stroke();

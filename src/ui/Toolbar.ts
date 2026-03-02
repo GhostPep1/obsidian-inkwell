@@ -10,9 +10,9 @@ const COLORS = [
 ];
 
 const WIDTHS = [
-  { name: "Fine",   value: 1 },
-  { name: "Medium", value: 2 },
-  { name: "Bold",   value: 4 },
+  { name: "Fine",   value: 2 },
+  { name: "Medium", value: 4 },
+  { name: "Bold",   value: 8 },
 ];
 
 export interface ToolbarCallbacks {

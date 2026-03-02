@@ -14,8 +14,8 @@ import {
 } from "../model/types";
 
 const TOOL_DEFAULTS: Record<ToolType, { color: string; width: number; opacity: number }> = {
-  pen:         { color: "#1A1A2E", width: 2,  opacity: 1.0 },
-  highlighter: { color: "#FFE066", width: 4,  opacity: 0.35 },
+  pen:         { color: "#1A1A2E", width: 3,  opacity: 1.0 },
+  highlighter: { color: "#FFE066", width: 16,  opacity: 0.35 },
   eraser:      { color: "#000000", width: 10, opacity: 1.0 },
 };
 
