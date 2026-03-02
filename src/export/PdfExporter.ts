@@ -1,5 +1,5 @@
 import { jsPDF } from "jspdf";
-import { InkwellFile, Viewport, Stroke } from "../model/types";
+import { InkwellFile, StrokeObject, Viewport, getStrokes } from "../model/types";
 import { PaperRenderer, PAGE_HEIGHT } from "../canvas/PaperRenderer";
 import { StrokeRenderer } from "../canvas/StrokeRenderer";
 
@@ -14,11 +14,11 @@ export class PdfExporter {
 
   exportToPdfBlob(file: InkwellFile): Blob {
     const pageWidth = file.canvas.width;
-    const totalHeight = this.getContentHeight(file);
+    const strokes = getStrokes(file);
+    const totalHeight = this.getContentHeight(strokes);
     const totalPages = Math.max(1, Math.ceil(totalHeight / PAGE_HEIGHT));
 
-    // Find which pages have strokes
-    const usedPages = this.getUsedPages(file.strokes, totalPages);
+    const usedPages = this.getUsedPages(strokes, totalPages);
 
     const orientation = pageWidth > PAGE_HEIGHT ? "landscape" : "portrait";
     const doc = new jsPDF({
@@ -38,13 +38,11 @@ export class PdfExporter {
       canvas.height = PAGE_HEIGHT;
       const ctx = canvas.getContext("2d")!;
 
-      // Fresh paper background for every page (scrollY=0 gives top margin)
       const bgVp: Viewport = { width: pageWidth, height: PAGE_HEIGHT, scrollY: 0 };
       this.paperRenderer.render(ctx, file.paper, bgVp);
 
-      // Strokes offset for this page
       const strokeVp: Viewport = { width: pageWidth, height: PAGE_HEIGHT, scrollY: pageIdx * PAGE_HEIGHT };
-      this.strokeRenderer.renderAll(ctx, file.strokes, strokeVp);
+      this.strokeRenderer.renderAll(ctx, strokes, strokeVp);
 
       const imgData = canvas.toDataURL("image/png");
       doc.addImage(imgData, "PNG", 0, 0, pageWidth, PAGE_HEIGHT);
@@ -53,25 +51,23 @@ export class PdfExporter {
     return doc.output("blob");
   }
 
-  private getUsedPages(strokes: Stroke[], totalPages: number): number[] {
-    if (strokes.length === 0) return [0]; // At least one page
+  private getUsedPages(strokes: StrokeObject[], totalPages: number): number[] {
+    if (strokes.length === 0) return [0];
 
     const pages = new Set<number>();
     for (const stroke of strokes) {
       for (const [, y] of stroke.points) {
-        const page = Math.floor(y / PAGE_HEIGHT);
-        pages.add(page);
+        pages.add(Math.floor(y / PAGE_HEIGHT));
       }
     }
-
     return Array.from(pages).sort((a, b) => a - b);
   }
 
-  private getContentHeight(file: InkwellFile): number {
-    if (file.strokes.length === 0) return PAGE_HEIGHT;
+  private getContentHeight(strokes: StrokeObject[]): number {
+    if (strokes.length === 0) return PAGE_HEIGHT;
 
     let maxY = 0;
-    for (const stroke of file.strokes) {
+    for (const stroke of strokes) {
       for (const [, y] of stroke.points) {
         if (y > maxY) maxY = y;
       }

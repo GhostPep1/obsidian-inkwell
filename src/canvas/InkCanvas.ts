@@ -3,11 +3,14 @@ import { StrokeRenderer } from "./StrokeRenderer";
 import { InputHandler } from "./InputHandler";
 import {
   InkwellFile,
-  Stroke,
+  StrokeObject,
   StrokePoint,
   ToolType,
   Viewport,
-  generateStrokeId,
+  CanvasObject,
+  generateId,
+  getStrokes,
+  computeBounds,
 } from "../model/types";
 
 const TOOL_DEFAULTS: Record<ToolType, { color: string; width: number; opacity: number }> = {
@@ -28,8 +31,8 @@ export class InkCanvas {
 
   private file: InkwellFile;
   private viewport: Viewport;
-  private currentStroke: Stroke | null = null;
-  private undoStack: Stroke[] = [];
+  private currentStroke: StrokeObject | null = null;
+  private undoStack: CanvasObject[] = [];
   private dirty = false;
 
   private onDirty: () => void;
@@ -146,10 +149,16 @@ export class InkCanvas {
     this.maybeExtendCanvas(docPoint[1]);
 
     this.currentStroke = {
-      id,
+      id: generateId("s"),
+      type: "stroke",
+      x: docPoint[0],
+      y: docPoint[1],
+      width: 0,
+      height: 0,
+      locked: false,
       tool,
       color: tool === "pen" ? this.penColor : defaults.color,
-      width: tool === "pen" ? this.penWidth : defaults.width,
+      strokeWidth: tool === "pen" ? this.penWidth : defaults.width,
       opacity: defaults.opacity,
       points: [docPoint],
     };
@@ -177,7 +186,14 @@ export class InkCanvas {
     if (!this.currentStroke) return;
 
     if (this.currentStroke.points.length >= 2) {
-      this.file.strokes.push(this.currentStroke);
+      // Compute final bounding box
+      const bounds = computeBoundsFromPoints(this.currentStroke.points);
+      this.currentStroke.x = bounds.x;
+      this.currentStroke.y = bounds.y;
+      this.currentStroke.width = bounds.width;
+      this.currentStroke.height = bounds.height;
+
+      this.file.objects[this.currentStroke.id] = this.currentStroke;
       this.undoStack = [];
       this.dirty = true;
     }
@@ -204,7 +220,8 @@ export class InkCanvas {
     const docY = py + this.viewport.scrollY;
     const hitRadius = 15;
 
-    const idx = this.file.strokes.findIndex((stroke) =>
+    const strokes = getStrokes(this.file);
+    const hit = strokes.find((stroke) =>
       stroke.points.some(([sx, sy]) => {
         const dx = sx - px;
         const dy = sy - docY;
@@ -212,9 +229,9 @@ export class InkCanvas {
       })
     );
 
-    if (idx >= 0) {
-      const removed = this.file.strokes.splice(idx, 1)[0];
-      this.undoStack.push(removed);
+    if (hit) {
+      delete this.file.objects[hit.id];
+      this.undoStack.push(hit);
       this.dirty = true;
       this.renderStrokes();
       this.onDirty();
@@ -222,19 +239,21 @@ export class InkCanvas {
   }
 
   undo(): void {
-    const stroke = this.file.strokes.pop();
-    if (stroke) {
-      this.undoStack.push(stroke);
-      this.dirty = true;
-      this.renderStrokes();
-      this.onDirty();
-    }
+    const ids = Object.keys(this.file.objects);
+    if (ids.length === 0) return;
+    const lastId = ids[ids.length - 1];
+    const obj = this.file.objects[lastId];
+    delete this.file.objects[lastId];
+    this.undoStack.push(obj);
+    this.dirty = true;
+    this.renderStrokes();
+    this.onDirty();
   }
 
   redo(): void {
-    const stroke = this.undoStack.pop();
-    if (stroke) {
-      this.file.strokes.push(stroke);
+    const obj = this.undoStack.pop();
+    if (obj) {
+      this.file.objects[obj.id] = obj;
       this.dirty = true;
       this.renderStrokes();
       this.onDirty();
@@ -250,7 +269,8 @@ export class InkCanvas {
   private renderStrokes(): void {
     const ctx = this.strokeCanvas.getContext("2d")!;
     ctx.clearRect(0, 0, this.viewport.width, this.viewport.height);
-    this.strokeRenderer.renderAll(ctx, this.file.strokes, this.viewport);
+    const strokes = getStrokes(this.file);
+    this.strokeRenderer.renderAll(ctx, strokes, this.viewport);
   }
 
   exportToPng(): string {
@@ -265,7 +285,8 @@ export class InkCanvas {
       scrollY: 0,
     };
     this.paperRenderer.render(ctx, this.file.paper, fullVp);
-    this.strokeRenderer.renderAll(ctx, this.file.strokes, fullVp);
+    const strokes = getStrokes(this.file);
+    this.strokeRenderer.renderAll(ctx, strokes, fullVp);
 
     return canvas.toDataURL("image/png");
   }
@@ -290,4 +311,19 @@ export class InkCanvas {
     this.strokeCanvas.remove();
     this.activeCanvas.remove();
   }
+}
+
+// ─── Helper ──────────────────────────────────────────────────
+
+function computeBoundsFromPoints(points: [number, number, number, number][]): {
+  x: number; y: number; width: number; height: number;
+} {
+  let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+  for (const [px, py] of points) {
+    if (px < minX) minX = px;
+    if (py < minY) minY = py;
+    if (px > maxX) maxX = px;
+    if (py > maxY) maxY = py;
+  }
+  return { x: minX, y: minY, width: maxX - minX, height: maxY - minY };
 }

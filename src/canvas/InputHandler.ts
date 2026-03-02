@@ -1,4 +1,4 @@
-import { StrokePoint, ToolType, generateStrokeId } from "../model/types";
+import { StrokePoint, ToolType, generateId } from "../model/types";
 
 export interface InputCallbacks {
   onStrokeStart: (id: string, tool: ToolType, point: StrokePoint) => void;
@@ -75,7 +75,7 @@ export class InputHandler {
       this.container.setPointerCapture(e.pointerId);
 
       const point = this.extractPoint(e);
-      const id = generateStrokeId();
+      const id = generateId();
       this.callbacks.onStrokeStart(id, this.activeTool, point);
 
     } else if (e.pointerType === "touch") {
