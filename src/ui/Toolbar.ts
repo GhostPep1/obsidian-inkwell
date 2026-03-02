@@ -21,7 +21,9 @@ export interface ToolbarCallbacks {
   onWidthChange: (width: number) => void;
   onUndo: () => void;
   onRedo: () => void;
-  onExport: () => void;
+  onExportPng: () => void;
+  onExportPdf: () => void;
+  onPrint: () => void;
 }
 
 export class Toolbar {
@@ -40,17 +42,14 @@ export class Toolbar {
   private build(): void {
     // ─── Tools ──────────────────────────────────
     const toolGroup = this.container.createDiv({ cls: "inkwell-toolbar-group" });
-
     this.addToolButton(toolGroup, "pen", "✏️", "Pen");
     this.addToolButton(toolGroup, "highlighter", "🖍️", "Highlighter");
     this.addToolButton(toolGroup, "eraser", "🧹", "Eraser");
 
-    // ─── Separator ──────────────────────────────
     this.container.createDiv({ cls: "inkwell-toolbar-sep" });
 
     // ─── Colors ─────────────────────────────────
     const colorGroup = this.container.createDiv({ cls: "inkwell-toolbar-group" });
-
     for (const color of COLORS) {
       const btn = colorGroup.createEl("button", {
         cls: "inkwell-color-btn",
@@ -67,12 +66,10 @@ export class Toolbar {
       });
     }
 
-    // ─── Separator ──────────────────────────────
     this.container.createDiv({ cls: "inkwell-toolbar-sep" });
 
     // ─── Widths ─────────────────────────────────
     const widthGroup = this.container.createDiv({ cls: "inkwell-toolbar-group" });
-
     for (const w of WIDTHS) {
       const btn = widthGroup.createEl("button", {
         cls: "inkwell-width-btn",
@@ -89,23 +86,29 @@ export class Toolbar {
       });
     }
 
-    // ─── Separator ──────────────────────────────
     this.container.createDiv({ cls: "inkwell-toolbar-sep" });
 
     // ─── Undo/Redo ──────────────────────────────
     const histGroup = this.container.createDiv({ cls: "inkwell-toolbar-group" });
-
     const undoBtn = histGroup.createEl("button", { cls: "inkwell-tool-btn", text: "↩", attr: { "aria-label": "Undo" } });
     undoBtn.addEventListener("click", () => this.callbacks.onUndo());
 
     const redoBtn = histGroup.createEl("button", { cls: "inkwell-tool-btn", text: "↪", attr: { "aria-label": "Redo" } });
     redoBtn.addEventListener("click", () => this.callbacks.onRedo());
 
-    // ─── Export ──────────────────────────────────
     this.container.createDiv({ cls: "inkwell-toolbar-sep" });
+
+    // ─── Export ─────────────────────────────────
     const exportGroup = this.container.createDiv({ cls: "inkwell-toolbar-group" });
-    const exportBtn = exportGroup.createEl("button", { cls: "inkwell-tool-btn", text: "📤", attr: { "aria-label": "Export PNG" } });
-    exportBtn.addEventListener("click", () => this.callbacks.onExport());
+
+    const pngBtn = exportGroup.createEl("button", { cls: "inkwell-tool-btn", text: "🖼️", attr: { "aria-label": "Export PNG" } });
+    pngBtn.addEventListener("click", () => this.callbacks.onExportPng());
+
+    const pdfBtn = exportGroup.createEl("button", { cls: "inkwell-tool-btn", text: "📄", attr: { "aria-label": "Export PDF" } });
+    pdfBtn.addEventListener("click", () => this.callbacks.onExportPdf());
+
+    const printBtn = exportGroup.createEl("button", { cls: "inkwell-tool-btn", text: "🖨️", attr: { "aria-label": "Print" } });
+    printBtn.addEventListener("click", () => this.callbacks.onPrint());
   }
 
   private addToolButton(group: HTMLElement, tool: ToolType, icon: string, label: string): void {

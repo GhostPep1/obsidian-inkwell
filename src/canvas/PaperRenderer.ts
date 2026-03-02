@@ -2,7 +2,6 @@ import { PaperConfig, Viewport } from "../model/types";
 
 export class PaperRenderer {
   render(ctx: CanvasRenderingContext2D, paper: PaperConfig, vp: Viewport): void {
-    // Background fill
     ctx.fillStyle = paper.color;
     ctx.fillRect(0, 0, vp.width, vp.height);
 
@@ -22,18 +21,20 @@ export class PaperRenderer {
   }
 
   private drawRuled(ctx: CanvasRenderingContext2D, paper: PaperConfig, vp: Viewport): void {
-    const { lineColor, lineSpacing, margin } = paper;
+    const { lineColor, lineSpacing, margin, marginTop } = paper;
 
-    // Horizontal ruled lines
     ctx.strokeStyle = lineColor;
     ctx.lineWidth = 0.5;
 
-    const firstLine = Math.floor(vp.scrollY / lineSpacing);
-    const lastLine = Math.ceil((vp.scrollY + vp.height) / lineSpacing);
+    // First line starts at marginTop, then every lineSpacing after
+    const firstLine = Math.max(0, Math.floor((vp.scrollY - marginTop) / lineSpacing));
+    const lastLine = Math.ceil((vp.scrollY + vp.height - marginTop) / lineSpacing);
 
     ctx.beginPath();
     for (let i = firstLine; i <= lastLine; i++) {
-      const y = Math.round(i * lineSpacing - vp.scrollY) + 0.5; // +0.5 for crisp lines
+      const y = Math.round(marginTop + i * lineSpacing - vp.scrollY) + 0.5;
+      if (y < 0) continue;
+      if (y > vp.height) break;
       ctx.moveTo(0, y);
       ctx.lineTo(vp.width, y);
     }
@@ -52,23 +53,23 @@ export class PaperRenderer {
   }
 
   private drawGrid(ctx: CanvasRenderingContext2D, paper: PaperConfig, vp: Viewport): void {
-    const { lineColor, lineSpacing } = paper;
+    const { lineColor, lineSpacing, marginTop } = paper;
 
     ctx.strokeStyle = lineColor;
     ctx.lineWidth = 0.5;
 
-    // Horizontal lines
-    const firstRow = Math.floor(vp.scrollY / lineSpacing);
-    const lastRow = Math.ceil((vp.scrollY + vp.height) / lineSpacing);
+    const firstRow = Math.max(0, Math.floor((vp.scrollY - marginTop) / lineSpacing));
+    const lastRow = Math.ceil((vp.scrollY + vp.height - marginTop) / lineSpacing);
 
     ctx.beginPath();
     for (let i = firstRow; i <= lastRow; i++) {
-      const y = Math.round(i * lineSpacing - vp.scrollY) + 0.5;
+      const y = Math.round(marginTop + i * lineSpacing - vp.scrollY) + 0.5;
+      if (y < 0) continue;
+      if (y > vp.height) break;
       ctx.moveTo(0, y);
       ctx.lineTo(vp.width, y);
     }
 
-    // Vertical lines
     const cols = Math.ceil(vp.width / lineSpacing);
     for (let i = 0; i <= cols; i++) {
       const x = Math.round(i * lineSpacing) + 0.5;
@@ -79,17 +80,19 @@ export class PaperRenderer {
   }
 
   private drawDots(ctx: CanvasRenderingContext2D, paper: PaperConfig, vp: Viewport): void {
-    const { lineColor, lineSpacing } = paper;
+    const { lineColor, lineSpacing, marginTop } = paper;
 
     ctx.fillStyle = lineColor;
     const dotRadius = 1.2;
 
-    const firstRow = Math.floor(vp.scrollY / lineSpacing);
-    const lastRow = Math.ceil((vp.scrollY + vp.height) / lineSpacing);
+    const firstRow = Math.max(0, Math.floor((vp.scrollY - marginTop) / lineSpacing));
+    const lastRow = Math.ceil((vp.scrollY + vp.height - marginTop) / lineSpacing);
     const cols = Math.ceil(vp.width / lineSpacing);
 
     for (let row = firstRow; row <= lastRow; row++) {
-      const y = row * lineSpacing - vp.scrollY;
+      const y = marginTop + row * lineSpacing - vp.scrollY;
+      if (y < 0) continue;
+      if (y > vp.height) break;
       for (let col = 0; col <= cols; col++) {
         const x = col * lineSpacing;
         ctx.beginPath();

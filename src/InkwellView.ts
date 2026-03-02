@@ -1,7 +1,8 @@
 import { TextFileView, WorkspaceLeaf, TFile, Notice } from "obsidian";
 import { InkCanvas } from "./canvas/InkCanvas";
 import { Toolbar } from "./ui/Toolbar";
-import { InkwellFile, createDefaultFile } from "./model/types";
+import { PdfExporter } from "./export/PdfExporter";
+import { InkwellFile, createDefaultFile, ToolType } from "./model/types";
 import type InkwellPlugin from "./main";
 
 export const INKWELL_VIEW_TYPE = "inkwell-view";
@@ -13,10 +14,12 @@ export class InkwellView extends TextFileView {
   private canvasContainer: HTMLElement | null = null;
   private fileData: InkwellFile | null = null;
   private saveTimeout: ReturnType<typeof setTimeout> | null = null;
+  private pdfExporter: PdfExporter;
 
   constructor(leaf: WorkspaceLeaf, plugin: InkwellPlugin) {
     super(leaf);
     this.plugin = plugin;
+    this.pdfExporter = new PdfExporter();
   }
 
   getViewType(): string {
@@ -31,8 +34,6 @@ export class InkwellView extends TextFileView {
     return "pencil";
   }
 
-  // ─── Lifecycle ─────────────────────────────────────────────
-
   async onOpen(): Promise<void> {
     const { contentEl } = this;
     contentEl.empty();
@@ -42,8 +43,6 @@ export class InkwellView extends TextFileView {
   async onClose(): Promise<void> {
     this.destroyCanvas();
   }
-
-  // ─── File I/O ──────────────────────────────────────────────
 
   getViewData(): string {
     if (this.fileData && this.inkCanvas) {
@@ -55,8 +54,11 @@ export class InkwellView extends TextFileView {
   setViewData(data: string, clear: boolean): void {
     try {
       this.fileData = JSON.parse(data) as InkwellFile;
+      // Migrate old files without marginTop
+      if (this.fileData.paper.marginTop === undefined) {
+        this.fileData.paper.marginTop = this.fileData.paper.type === "ruled" ? 64 : 28;
+      }
     } catch {
-      // Invalid or empty file — create default
       this.fileData = createDefaultFile("ruled");
     }
 
@@ -71,8 +73,6 @@ export class InkwellView extends TextFileView {
     this.destroyCanvas();
   }
 
-  // ─── UI Construction ───────────────────────────────────────
-
   private buildUI(): void {
     if (!this.fileData) return;
     this.destroyCanvas();
@@ -81,41 +81,35 @@ export class InkwellView extends TextFileView {
     contentEl.empty();
     contentEl.addClass("inkwell-root");
 
-    // Toolbar
     this.toolbar = new Toolbar(contentEl, {
-      onToolChange: (tool: import("./model/types").ToolType) => this.inkCanvas?.setTool(tool),
+      onToolChange: (tool: ToolType) => this.inkCanvas?.setTool(tool),
       onColorChange: (color: string) => this.inkCanvas?.setColor(color),
       onWidthChange: (width: number) => this.inkCanvas?.setWidth(width),
       onUndo: () => this.inkCanvas?.undo(),
       onRedo: () => this.inkCanvas?.redo(),
-      onExport: () => this.exportPng(),
+      onExportPng: () => this.exportPng(),
+      onExportPdf: () => this.exportPdf(),
+      onPrint: () => this.printNote(),
     });
 
-    // Canvas container
     this.canvasContainer = contentEl.createDiv({ cls: "inkwell-canvas-container" });
 
-    // Init canvas
     this.inkCanvas = new InkCanvas(
       this.canvasContainer,
       this.fileData,
       () => this.scheduleSave()
     );
 
-    // Keyboard shortcuts
     this.registerDomEvent(contentEl, "keydown", this.onKeyDown.bind(this));
   }
-
-  // ─── Auto-Save ─────────────────────────────────────────────
 
   private scheduleSave(): void {
     if (this.saveTimeout) clearTimeout(this.saveTimeout);
     this.saveTimeout = setTimeout(() => {
       this.requestSave();
       this.inkCanvas?.markClean();
-    }, 1000); // Save 1 second after last stroke
+    }, 1000);
   }
-
-  // ─── Keyboard ──────────────────────────────────────────────
 
   private onKeyDown(e: KeyboardEvent): void {
     const mod = e.metaKey || e.ctrlKey;
@@ -129,14 +123,14 @@ export class InkwellView extends TextFileView {
     } else if (mod && e.key === "y") {
       e.preventDefault();
       this.inkCanvas?.redo();
+    } else if (mod && e.key === "p") {
+      e.preventDefault();
+      this.printNote();
     }
   }
 
-  // ─── Export ────────────────────────────────────────────────
-
   private exportPng(): void {
     if (!this.inkCanvas || !this.file) return;
-
     const dataUrl = this.inkCanvas.exportToPng();
     const link = document.createElement("a");
     link.download = `${this.file.basename}.png`;
@@ -145,7 +139,36 @@ export class InkwellView extends TextFileView {
     new Notice("Exported to PNG");
   }
 
-  // ─── Cleanup ───────────────────────────────────────────────
+  private async exportPdf(): Promise<void> {
+    if (!this.fileData || !this.file) return;
+    try {
+      new Notice("Generating PDF...");
+      await this.pdfExporter.exportToPdf(this.fileData, `${this.file.basename}.pdf`);
+      new Notice("Exported to PDF");
+    } catch (err) {
+      new Notice(`PDF export failed: ${err}`);
+      console.error("Inkwell: PDF export failed", err);
+    }
+  }
+
+  private printNote(): void {
+    if (!this.inkCanvas) return;
+    const dataUrl = this.inkCanvas.exportToPng();
+    const printWindow = window.open("", "_blank");
+    if (!printWindow) {
+      new Notice("Popup blocked — allow popups to print");
+      return;
+    }
+    printWindow.document.write(`
+      <html><head><title>Print Inkwell Note</title>
+      <style>
+        @media print { body { margin: 0; } img { width: 100%; height: auto; } }
+        body { margin: 0; display: flex; justify-content: center; }
+        img { max-width: 100%; }
+      </style></head>
+      <body><img src="${dataUrl}" onload="window.print(); window.close();" /></body></html>
+    `);
+  }
 
   private destroyCanvas(): void {
     if (this.saveTimeout) clearTimeout(this.saveTimeout);

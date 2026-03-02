@@ -4,17 +4,17 @@ export type PaperType = "ruled" | "grid" | "dot" | "blank";
 
 export interface PaperConfig {
   type: PaperType;
-  color: string;        // background color
-  lineColor: string;    // line/dot/grid color
-  lineSpacing: number;  // px between lines
-  margin: number;       // left margin line (0 = none)
+  color: string;
+  lineColor: string;
+  lineSpacing: number;
+  margin: number;
+  marginTop: number;
 }
 
 // ─── Stroke Data ───────────────────────────────────────────────
 
 export type ToolType = "pen" | "highlighter" | "eraser";
 
-/** Single point: [x, y, pressure, timestamp] */
 export type StrokePoint = [number, number, number, number];
 
 export interface Stroke {
@@ -61,24 +61,28 @@ export const PAPER_PRESETS: Record<PaperType, Omit<PaperConfig, "type">> = {
     lineColor: "#C8D0E0",
     lineSpacing: 32,
     margin: 72,
+    marginTop: 64,
   },
   grid: {
     color: "#FFFEF9",
     lineColor: "#D0D8E4",
     lineSpacing: 28,
     margin: 0,
+    marginTop: 28,
   },
   dot: {
     color: "#FFFEF9",
     lineColor: "#B8C0D0",
     lineSpacing: 28,
     margin: 0,
+    marginTop: 28,
   },
   blank: {
     color: "#FFFFFF",
     lineColor: "#000000",
     lineSpacing: 32,
     margin: 0,
+    marginTop: 0,
   },
 };
 
@@ -93,7 +97,7 @@ export function createDefaultFile(paperType: PaperType = "ruled"): InkwellFile {
     paper: { type: paperType, ...preset },
     canvas: {
       width: 1200,
-      height: 3200, // tall default for vertical scrolling
+      height: 3200,
       scrollY: 0,
     },
     strokes: [],
