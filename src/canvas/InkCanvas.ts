@@ -6,12 +6,16 @@ import {
   InkwellFile,
   StrokeObject,
   TextObject,
+  ImageObject,
   StrokePoint,
   ToolType,
   Viewport,
   CanvasObject,
   generateId,
   getStrokes,
+  getTexts,
+  getImages,
+  computeBounds,
 } from "../model/types";
 
 const TOOL_DEFAULTS: Record<ToolType, { color: string; width: number; opacity: number }> = {
@@ -27,7 +31,11 @@ const TEXT_DEFAULTS = {
   align: "left" as const,
 };
 
-const DRAG_THRESHOLD = 8; // px before tap becomes drag
+const DRAG_THRESHOLD = 8;
+const HANDLE_SIZE = 12;       // visual size
+const HANDLE_HIT_SIZE = 28;   // touch target
+
+type DragAction = "move" | "resize-nw" | "resize-ne" | "resize-sw" | "resize-se";
 
 export class InkCanvas {
   private container: HTMLElement;
@@ -54,28 +62,41 @@ export class InkCanvas {
   private penWidth = 4;
   private resizeObserver: ResizeObserver;
 
-  // Text editing state
+  // Text editing
   private activeTextarea: HTMLTextAreaElement | null = null;
   private editingTextId: string | null = null;
 
-  // Drag state
-  private dragTarget: TextObject | null = null;
+  // Drag/resize state (shared for text + image)
+  private dragTarget: CanvasObject | null = null;
+  private dragAction: DragAction = "move";
   private dragStartX = 0;
   private dragStartY = 0;
   private dragObjStartX = 0;
   private dragObjStartY = 0;
+  private dragObjStartW = 0;
+  private dragObjStartH = 0;
   private isDragging = false;
-  private pointerDownTime = 0;
 
-  // Bound handlers for cleanup
+  // Image cache: assetId → loaded HTMLImageElement
+  private imageCache: Map<string, HTMLImageElement> = new Map();
+  private imageLoadingSet: Set<string> = new Set();
+  private resolveAssetUrl: (assetId: string) => string | null;
+
+  // Pointer handlers
   private boundPointerDown: (e: PointerEvent) => void;
   private boundPointerMove: (e: PointerEvent) => void;
   private boundPointerUp: (e: PointerEvent) => void;
 
-  constructor(container: HTMLElement, file: InkwellFile, onDirty: () => void) {
+  constructor(
+    container: HTMLElement,
+    file: InkwellFile,
+    onDirty: () => void,
+    resolveAssetUrl: (assetId: string) => string | null,
+  ) {
     this.container = container;
     this.file = file;
     this.onDirty = onDirty;
+    this.resolveAssetUrl = resolveAssetUrl;
 
     if (this.file.canvas.height < PAGE_HEIGHT) {
       this.file.canvas.height = PAGE_HEIGHT;
@@ -106,7 +127,6 @@ export class InkCanvas {
       onScroll: this.handleScroll.bind(this),
     });
 
-    // Text mode pointer handlers
     this.boundPointerDown = this.handlePointerDown.bind(this);
     this.boundPointerMove = this.handlePointerMove.bind(this);
     this.boundPointerUp = this.handlePointerUp.bind(this);
@@ -114,6 +134,9 @@ export class InkCanvas {
     this.activeCanvas.addEventListener("pointerdown", this.boundPointerDown);
     this.activeCanvas.addEventListener("pointermove", this.boundPointerMove);
     this.activeCanvas.addEventListener("pointerup", this.boundPointerUp);
+
+    // Preload existing images
+    this.preloadImages();
 
     this.resize();
     this.renderBackground();
@@ -152,17 +175,76 @@ export class InkCanvas {
     this.renderAll();
   }
 
-  // ─── Mode & Tool Control ───────────────────────────────────
+  // ═══════════════════════════════════════════════════════════════
+  //  IMAGE MANAGEMENT
+  // ═══════════════════════════════════════════════════════════════
+
+  private preloadImages(): void {
+    const images = getImages(this.file);
+    for (const img of images) {
+      this.ensureImageLoaded(img.assetId);
+    }
+  }
+
+  private ensureImageLoaded(assetId: string): void {
+    if (this.imageCache.has(assetId) || this.imageLoadingSet.has(assetId)) return;
+
+    const url = this.resolveAssetUrl(assetId);
+    if (!url) return;
+
+    this.imageLoadingSet.add(assetId);
+
+    const img = new Image();
+    img.onload = () => {
+      this.imageCache.set(assetId, img);
+      this.imageLoadingSet.delete(assetId);
+      this.renderAll(); // Re-render once loaded
+    };
+    img.onerror = () => {
+      this.imageLoadingSet.delete(assetId);
+      console.error(`Inkwell: failed to load image asset ${assetId}`);
+    };
+    img.src = url;
+  }
+
+  /** Called by InkwellView after file picker inserts an image */
+  addImage(assetId: string, docX: number, docY: number, width: number, height: number): void {
+    const id = generateId("img");
+    const imgObj: ImageObject = {
+      id,
+      type: "image",
+      x: docX,
+      y: docY,
+      width,
+      height,
+      locked: false,
+      assetId,
+    };
+    this.file.objects[id] = imgObj;
+    this.ensureImageLoaded(assetId);
+    this.dirty = true;
+    this.onDirty();
+    this.renderAll();
+  }
+
+  getViewport(): Viewport {
+    return { ...this.viewport };
+  }
+
+  // ═══════════════════════════════════════════════════════════════
+  //  MODE & TOOL CONTROL
+  // ═══════════════════════════════════════════════════════════════
 
   setMode(mode: InteractionMode): void {
     if (this.activeTextarea) this.commitText();
     this.mode = mode;
     this.inputHandler.setEnabled(mode === "draw");
     if (mode === "text") {
-      this.activeCanvas.style.cursor = "text";
+      this.activeCanvas.style.cursor = "default";
     } else {
       this.activeCanvas.style.cursor = "crosshair";
     }
+    this.renderAll(); // Redraw selection outlines
   }
 
   setTool(tool: ToolType): void {
@@ -171,24 +253,22 @@ export class InkCanvas {
     this.mode = "draw";
     this.inputHandler.setEnabled(true);
     this.activeCanvas.style.cursor = "crosshair";
+    this.renderAll();
   }
 
   setColor(color: string): void { this.penColor = color; }
   setWidth(width: number): void { this.penWidth = width; }
   getTool(): ToolType { return this.currentTool; }
 
-  // ─── Pointer Handling (text mode: tap vs drag) ─────────────
+  // ═══════════════════════════════════════════════════════════════
+  //  POINTER HANDLING (text mode: tap / drag / resize)
+  // ═══════════════════════════════════════════════════════════════
 
   private getDocCoords(e: PointerEvent): { screenX: number; screenY: number; docX: number; docY: number } {
     const rect = this.activeCanvas.getBoundingClientRect();
     const screenX = e.clientX - rect.left;
     const screenY = e.clientY - rect.top;
-    return {
-      screenX,
-      screenY,
-      docX: screenX,
-      docY: screenY + this.viewport.scrollY,
-    };
+    return { screenX, screenY, docX: screenX, docY: screenY + this.viewport.scrollY };
   }
 
   private handlePointerDown(e: PointerEvent): void {
@@ -196,97 +276,212 @@ export class InkCanvas {
     if (e.pointerType === "touch") return;
 
     const { screenX, screenY, docX, docY } = this.getDocCoords(e);
-    const hitText = this.findTextAt(docX, docY);
 
-    if (hitText) {
-      // Potential drag — record start
-      this.dragTarget = hitText;
+    // Check resize handles first (images + text)
+    const handleHit = this.findHandleAt(docX, docY);
+    if (handleHit) {
+      this.dragTarget = handleHit.obj;
+      this.dragAction = handleHit.action;
       this.dragStartX = screenX;
       this.dragStartY = screenY;
-      this.dragObjStartX = hitText.x;
-      this.dragObjStartY = hitText.y;
-      this.isDragging = false;
-      this.pointerDownTime = Date.now();
+      this.dragObjStartX = handleHit.obj.x;
+      this.dragObjStartY = handleHit.obj.y;
+      this.dragObjStartW = handleHit.obj.width;
+      this.dragObjStartH = handleHit.obj.height;
+      this.isDragging = true; // Resize starts immediately
+      e.preventDefault();
+      return;
+    }
+
+    // Check object body hit
+    const hitObj = this.findObjectAt(docX, docY);
+    if (hitObj) {
+      this.dragTarget = hitObj;
+      this.dragAction = "move";
+      this.dragStartX = screenX;
+      this.dragStartY = screenY;
+      this.dragObjStartX = hitObj.x;
+      this.dragObjStartY = hitObj.y;
+      this.dragObjStartW = hitObj.width;
+      this.dragObjStartH = hitObj.height;
+      this.isDragging = false; // Wait for threshold
       e.preventDefault();
     }
   }
 
   private handlePointerMove(e: PointerEvent): void {
-    if (this.mode !== "text" || !this.dragTarget) return;
+    if (this.mode !== "text") return;
+
+    // Update cursor based on what's under pointer
+    if (!this.dragTarget) {
+      const { docX, docY } = this.getDocCoords(e);
+      const handle = this.findHandleAt(docX, docY);
+      if (handle) {
+        this.activeCanvas.style.cursor = this.getCursorForAction(handle.action);
+      } else if (this.findObjectAt(docX, docY)) {
+        this.activeCanvas.style.cursor = "move";
+      } else {
+        this.activeCanvas.style.cursor = "text";
+      }
+      return;
+    }
 
     const { screenX, screenY } = this.getDocCoords(e);
     const dx = screenX - this.dragStartX;
     const dy = screenY - this.dragStartY;
 
-    if (!this.isDragging && (Math.abs(dx) > DRAG_THRESHOLD || Math.abs(dy) > DRAG_THRESHOLD)) {
-      this.isDragging = true;
-      this.activeCanvas.style.cursor = "grabbing";
+    if (!this.isDragging && this.dragAction === "move") {
+      if (Math.abs(dx) > DRAG_THRESHOLD || Math.abs(dy) > DRAG_THRESHOLD) {
+        this.isDragging = true;
+        this.activeCanvas.style.cursor = "grabbing";
+      }
     }
 
-    if (this.isDragging) {
-      this.dragTarget.x = this.dragObjStartX + dx;
-      this.dragTarget.y = this.dragObjStartY + dy;
-      this.file.objects[this.dragTarget.id] = this.dragTarget;
-      this.renderAll();
+    if (!this.isDragging) return;
+
+    const obj = this.dragTarget;
+
+    if (this.dragAction === "move") {
+      obj.x = this.dragObjStartX + dx;
+      obj.y = this.dragObjStartY + dy;
+    } else {
+      // Resize — maintain aspect ratio for images
+      const isImage = obj.type === "image";
+      const aspectRatio = this.dragObjStartW / this.dragObjStartH;
+
+      let newX = obj.x, newY = obj.y, newW = obj.width, newH = obj.height;
+
+      switch (this.dragAction) {
+        case "resize-se":
+          newW = Math.max(40, this.dragObjStartW + dx);
+          newH = isImage ? newW / aspectRatio : Math.max(20, this.dragObjStartH + dy);
+          break;
+        case "resize-sw":
+          newW = Math.max(40, this.dragObjStartW - dx);
+          newH = isImage ? newW / aspectRatio : Math.max(20, this.dragObjStartH + dy);
+          newX = this.dragObjStartX + this.dragObjStartW - newW;
+          break;
+        case "resize-ne":
+          newW = Math.max(40, this.dragObjStartW + dx);
+          newH = isImage ? newW / aspectRatio : Math.max(20, this.dragObjStartH - dy);
+          newY = this.dragObjStartY + this.dragObjStartH - newH;
+          break;
+        case "resize-nw":
+          newW = Math.max(40, this.dragObjStartW - dx);
+          newH = isImage ? newW / aspectRatio : Math.max(20, this.dragObjStartH - dy);
+          newX = this.dragObjStartX + this.dragObjStartW - newW;
+          newY = this.dragObjStartY + this.dragObjStartH - newH;
+          break;
+      }
+
+      obj.x = newX;
+      obj.y = newY;
+      obj.width = newW;
+      obj.height = newH;
     }
+
+    this.file.objects[obj.id] = obj;
+    this.renderAll();
   }
 
   private handlePointerUp(e: PointerEvent): void {
     if (this.mode !== "text") return;
     if (e.pointerType === "touch") return;
 
-    const { screenX, screenY, docX, docY } = this.getDocCoords(e);
+    const { docX, docY, screenX, screenY } = this.getDocCoords(e);
 
     if (this.dragTarget && this.isDragging) {
-      // Finished drag — commit position
+      // Finished drag/resize
       this.dirty = true;
       this.onDirty();
       this.dragTarget = null;
       this.isDragging = false;
-      this.activeCanvas.style.cursor = "text";
+      this.activeCanvas.style.cursor = "default";
       this.renderAll();
       return;
     }
 
-    // It was a tap, not a drag
+    // It was a tap
     this.dragTarget = null;
     this.isDragging = false;
 
     const hitText = this.findTextAt(docX, docY);
     if (hitText) {
       this.editExistingText(hitText);
-    } else {
+    } else if (!this.findObjectAt(docX, docY)) {
+      // Tapped empty space → new text
       this.createNewText(screenX, screenY, docX, docY);
     }
   }
 
-  // ─── Text CRUD ─────────────────────────────────────────────
+  private getCursorForAction(action: DragAction): string {
+    switch (action) {
+      case "resize-nw": case "resize-se": return "nwse-resize";
+      case "resize-ne": case "resize-sw": return "nesw-resize";
+      default: return "move";
+    }
+  }
+
+  // ═══════════════════════════════════════════════════════════════
+  //  HIT TESTING
+  // ═══════════════════════════════════════════════════════════════
+
+  private findObjectAt(docX: number, docY: number): CanvasObject | null {
+    const objects = Object.values(this.file.objects).filter(o => o.type === "text" || o.type === "image");
+    for (let i = objects.length - 1; i >= 0; i--) {
+      const o = objects[i];
+      if (docX >= o.x && docX <= o.x + o.width && docY >= o.y && docY <= o.y + o.height) {
+        return o;
+      }
+    }
+    return null;
+  }
 
   private findTextAt(docX: number, docY: number): TextObject | null {
-    const texts = Object.values(this.file.objects).filter(
-      (o): o is TextObject => o.type === "text"
-    );
+    const texts = getTexts(this.file);
     for (let i = texts.length - 1; i >= 0; i--) {
       const t = texts[i];
-      if (docX >= t.x && docX <= t.x + t.width &&
-          docY >= t.y && docY <= t.y + t.height) {
+      if (docX >= t.x && docX <= t.x + t.width && docY >= t.y && docY <= t.y + t.height) {
         return t;
       }
     }
     return null;
   }
 
+  private findHandleAt(docX: number, docY: number): { obj: CanvasObject; action: DragAction } | null {
+    const objects = Object.values(this.file.objects).filter(o => o.type === "text" || o.type === "image");
+
+    for (let i = objects.length - 1; i >= 0; i--) {
+      const o = objects[i];
+      const hs = HANDLE_HIT_SIZE / 2;
+
+      const corners: { cx: number; cy: number; action: DragAction }[] = [
+        { cx: o.x,           cy: o.y,            action: "resize-nw" },
+        { cx: o.x + o.width, cy: o.y,            action: "resize-ne" },
+        { cx: o.x,           cy: o.y + o.height, action: "resize-sw" },
+        { cx: o.x + o.width, cy: o.y + o.height, action: "resize-se" },
+      ];
+
+      for (const c of corners) {
+        if (Math.abs(docX - c.cx) < hs && Math.abs(docY - c.cy) < hs) {
+          return { obj: o, action: c.action };
+        }
+      }
+    }
+    return null;
+  }
+
+  // ═══════════════════════════════════════════════════════════════
+  //  TEXT CRUD
+  // ═══════════════════════════════════════════════════════════════
+
   private createNewText(screenX: number, screenY: number, docX: number, docY: number): void {
     if (this.activeTextarea) this.commitText();
 
     const id = generateId("txt");
     const textObj: TextObject = {
-      id,
-      type: "text",
-      x: docX,
-      y: docY,
-      width: 300,
-      height: 30,
+      id, type: "text",
+      x: docX, y: docY, width: 300, height: 30,
       locked: false,
       content: "",
       fontSize: TEXT_DEFAULTS.fontSize,
@@ -302,11 +497,11 @@ export class InkCanvas {
   private editExistingText(textObj: TextObject): void {
     if (this.activeTextarea) this.commitText();
 
-    const screenX = textObj.x;
-    const screenY = textObj.y - this.viewport.scrollY;
-
     this.editingTextId = textObj.id;
     this.renderAll();
+
+    const screenX = textObj.x;
+    const screenY = textObj.y - this.viewport.scrollY;
 
     this.spawnTextarea(textObj, screenX, screenY);
     this.activeTextarea!.value = textObj.content;
@@ -339,19 +534,14 @@ export class InkCanvas {
       ta.style.height = "auto";
       ta.style.height = `${ta.scrollHeight}px`;
     });
-
     ta.addEventListener("blur", () => this.commitText());
-
     ta.addEventListener("keydown", (e: KeyboardEvent) => {
-      if (e.key === "Escape") {
-        e.preventDefault();
-        ta.blur();
-      }
+      if (e.key === "Escape") { e.preventDefault(); ta.blur(); }
     });
 
     this.overlayLayer.appendChild(ta);
     this.activeTextarea = ta;
-    ta.focus();
+    ta.focus(); // SYNCHRONOUS for iPad keyboard
   }
 
   private commitText(): void {
@@ -363,27 +553,22 @@ export class InkCanvas {
     if (content.length > 0) {
       const rect = ta.getBoundingClientRect();
       const containerRect = this.container.getBoundingClientRect();
-
       const screenX = rect.left - containerRect.left;
       const screenY = rect.top - containerRect.top;
 
       const existing = this.file.objects[this.editingTextId] as TextObject | undefined;
 
       const textObj: TextObject = {
-        id: this.editingTextId,
-        type: "text",
+        id: this.editingTextId, type: "text",
         x: screenX,
         y: screenY + this.viewport.scrollY,
-        width: rect.width,
-        height: rect.height,
-        locked: false,
-        content,
+        width: rect.width, height: rect.height,
+        locked: false, content,
         fontSize: existing?.fontSize ?? TEXT_DEFAULTS.fontSize,
         fontFamily: existing?.fontFamily ?? TEXT_DEFAULTS.fontFamily,
         color: existing?.color ?? this.penColor,
         align: existing?.align ?? TEXT_DEFAULTS.align,
       };
-
       this.file.objects[this.editingTextId] = textObj;
       this.dirty = true;
       this.onDirty();
@@ -397,40 +582,30 @@ export class InkCanvas {
     this.renderAll();
   }
 
-  // ─── Auto-extend ──────────────────────────────────────────
+  // ═══════════════════════════════════════════════════════════════
+  //  DRAWING HANDLERS
+  // ═══════════════════════════════════════════════════════════════
 
   private maybeExtendCanvas(docY: number): void {
-    const bottomMargin = 300;
-    if (docY > this.file.canvas.height - bottomMargin) {
+    if (docY > this.file.canvas.height - 300) {
       this.file.canvas.height += PAGE_HEIGHT;
       this.renderBackground();
     }
   }
 
-  // ─── Drawing Handlers ─────────────────────────────────────
-
   private handleStrokeStart(id: string, tool: ToolType, point: StrokePoint): void {
     if (this.mode === "text") return;
 
-    if (tool === "eraser") {
-      this.eraseAtPoint(point);
-      return;
-    }
+    if (tool === "eraser") { this.eraseAtPoint(point); return; }
 
     const defaults = TOOL_DEFAULTS[tool];
     const docPoint: StrokePoint = [point[0], point[1] + this.viewport.scrollY, point[2], point[3]];
-
     this.maybeExtendCanvas(docPoint[1]);
 
     this.currentStroke = {
-      id: generateId("s"),
-      type: "stroke",
-      x: docPoint[0],
-      y: docPoint[1],
-      width: 0,
-      height: 0,
-      locked: false,
-      tool,
+      id: generateId("s"), type: "stroke",
+      x: docPoint[0], y: docPoint[1], width: 0, height: 0,
+      locked: false, tool,
       color: tool === "pen" ? this.penColor : defaults.color,
       strokeWidth: tool === "pen" ? this.penWidth : defaults.width,
       opacity: defaults.opacity,
@@ -440,17 +615,11 @@ export class InkCanvas {
 
   private handleStrokeMove(point: StrokePoint): void {
     if (this.mode === "text") return;
-
-    if (this.currentTool === "eraser") {
-      this.eraseAtPoint(point);
-      return;
-    }
-
+    if (this.currentTool === "eraser") { this.eraseAtPoint(point); return; }
     if (!this.currentStroke) return;
 
     const docPoint: StrokePoint = [point[0], point[1] + this.viewport.scrollY, point[2], point[3]];
     this.currentStroke.points.push(docPoint);
-
     this.maybeExtendCanvas(docPoint[1]);
 
     const ctx = this.activeCanvas.getContext("2d")!;
@@ -463,19 +632,17 @@ export class InkCanvas {
     if (!this.currentStroke) return;
 
     if (this.currentStroke.points.length >= 2) {
-      const bounds = computeBoundsFromPoints(this.currentStroke.points);
+      const bounds = computeBounds(this.currentStroke.points);
       this.currentStroke.x = bounds.x;
       this.currentStroke.y = bounds.y;
       this.currentStroke.width = bounds.width;
       this.currentStroke.height = bounds.height;
-
       this.file.objects[this.currentStroke.id] = this.currentStroke;
       this.undoStack = [];
       this.dirty = true;
     }
 
     this.currentStroke = null;
-
     const actCtx = this.activeCanvas.getContext("2d")!;
     actCtx.clearRect(0, 0, this.viewport.width, this.viewport.height);
     this.renderAll();
@@ -489,9 +656,7 @@ export class InkCanvas {
 
     if (this.activeTextarea && this.editingTextId) {
       const obj = this.file.objects[this.editingTextId] as TextObject;
-      if (obj) {
-        this.activeTextarea.style.top = `${obj.y - this.viewport.scrollY}px`;
-      }
+      if (obj) this.activeTextarea.style.top = `${obj.y - this.viewport.scrollY}px`;
     }
 
     this.renderBackground();
@@ -503,15 +668,11 @@ export class InkCanvas {
     const docY = py + this.viewport.scrollY;
     const hitRadius = 15;
 
+    // Check strokes
     const strokes = getStrokes(this.file);
-    const hit = strokes.find((stroke) =>
-      stroke.points.some(([sx, sy]) => {
-        const dx = sx - px;
-        const dy = sy - docY;
-        return dx * dx + dy * dy < hitRadius * hitRadius;
-      })
+    const hit = strokes.find((s) =>
+      s.points.some(([sx, sy]) => (sx - px) ** 2 + (sy - docY) ** 2 < hitRadius * hitRadius)
     );
-
     if (hit) {
       delete this.file.objects[hit.id];
       this.undoStack.push(hit);
@@ -521,10 +682,11 @@ export class InkCanvas {
       return;
     }
 
-    const textHit = this.findTextAt(px, docY);
-    if (textHit) {
-      delete this.file.objects[textHit.id];
-      this.undoStack.push(textHit);
+    // Check text + images
+    const objHit = this.findObjectAt(px, docY);
+    if (objHit) {
+      delete this.file.objects[objHit.id];
+      this.undoStack.push(objHit);
       this.dirty = true;
       this.renderAll();
       this.onDirty();
@@ -547,13 +709,16 @@ export class InkCanvas {
     const obj = this.undoStack.pop();
     if (obj) {
       this.file.objects[obj.id] = obj;
+      if (obj.type === "image") this.ensureImageLoaded((obj as ImageObject).assetId);
       this.dirty = true;
       this.renderAll();
       this.onDirty();
     }
   }
 
-  // ─── Rendering ─────────────────────────────────────────────
+  // ═══════════════════════════════════════════════════════════════
+  //  RENDERING
+  // ═══════════════════════════════════════════════════════════════
 
   private renderBackground(): void {
     const ctx = this.bgCanvas.getContext("2d")!;
@@ -561,23 +726,63 @@ export class InkCanvas {
     this.paperRenderer.render(ctx, this.file.paper, this.viewport);
   }
 
-  private renderAll(): void {
+  renderAll(): void {
     const ctx = this.strokeCanvas.getContext("2d")!;
     ctx.clearRect(0, 0, this.viewport.width, this.viewport.height);
 
+    // Render images (behind strokes)
+    this.renderImages(ctx);
+
+    // Render strokes
     const strokes = getStrokes(this.file);
     this.strokeRenderer.renderAll(ctx, strokes, this.viewport);
+
+    // Render text (on top)
     this.renderTextObjects(ctx);
+
+    // Draw selection handles in text mode
+    if (this.mode === "text") {
+      this.renderSelectionHandles(ctx);
+    }
+  }
+
+  private renderImages(ctx: CanvasRenderingContext2D): void {
+    const images = getImages(this.file);
+
+    for (const imgObj of images) {
+      // Viewport culling
+      if (imgObj.y + imgObj.height < this.viewport.scrollY - 50) continue;
+      if (imgObj.y > this.viewport.scrollY + this.viewport.height + 50) continue;
+
+      const screenY = imgObj.y - this.viewport.scrollY;
+      const cachedImg = this.imageCache.get(imgObj.assetId);
+
+      if (cachedImg) {
+        ctx.drawImage(cachedImg, imgObj.x, screenY, imgObj.width, imgObj.height);
+      } else {
+        // Placeholder while loading
+        ctx.save();
+        ctx.fillStyle = "#F0F0F0";
+        ctx.fillRect(imgObj.x, screenY, imgObj.width, imgObj.height);
+        ctx.strokeStyle = "#CCC";
+        ctx.lineWidth = 1;
+        ctx.strokeRect(imgObj.x, screenY, imgObj.width, imgObj.height);
+        ctx.fillStyle = "#999";
+        ctx.font = "14px sans-serif";
+        ctx.textAlign = "center";
+        ctx.textBaseline = "middle";
+        ctx.fillText("Loading...", imgObj.x + imgObj.width / 2, screenY + imgObj.height / 2);
+        ctx.restore();
+        this.ensureImageLoaded(imgObj.assetId);
+      }
+    }
   }
 
   private renderTextObjects(ctx: CanvasRenderingContext2D): void {
-    const texts = Object.values(this.file.objects).filter(
-      (o): o is TextObject => o.type === "text"
-    );
+    const texts = getTexts(this.file);
 
     for (const t of texts) {
       if (t.id === this.editingTextId) continue;
-
       if (t.y + t.height < this.viewport.scrollY - 50) continue;
       if (t.y > this.viewport.scrollY + this.viewport.height + 50) continue;
 
@@ -589,15 +794,6 @@ export class InkCanvas {
       ctx.textAlign = t.align as CanvasTextAlign;
       ctx.textBaseline = "top";
 
-      // Subtle highlight when in text mode (shows it's tappable/draggable)
-      if (this.mode === "text") {
-        ctx.strokeStyle = "rgba(37, 99, 235, 0.3)";
-        ctx.lineWidth = 1;
-        ctx.setLineDash([4, 4]);
-        ctx.strokeRect(t.x, screenY, t.width, t.height);
-        ctx.setLineDash([]);
-      }
-
       const lines = this.wrapText(ctx, t.content, t.width - 12);
       const lineHeight = t.fontSize * 1.4;
 
@@ -608,6 +804,45 @@ export class InkCanvas {
       for (let i = 0; i < lines.length; i++) {
         ctx.fillText(lines[i], textX, screenY + 4 + i * lineHeight);
       }
+      ctx.restore();
+    }
+  }
+
+  private renderSelectionHandles(ctx: CanvasRenderingContext2D): void {
+    const objects = Object.values(this.file.objects).filter(o => o.type === "text" || o.type === "image");
+
+    for (const o of objects) {
+      if (o.id === this.editingTextId) continue;
+      if (o.y + o.height < this.viewport.scrollY - 50) continue;
+      if (o.y > this.viewport.scrollY + this.viewport.height + 50) continue;
+
+      const screenY = o.y - this.viewport.scrollY;
+
+      // Dashed border
+      ctx.save();
+      ctx.strokeStyle = "rgba(37, 99, 235, 0.4)";
+      ctx.lineWidth = 1;
+      ctx.setLineDash([4, 4]);
+      ctx.strokeRect(o.x, screenY, o.width, o.height);
+      ctx.setLineDash([]);
+
+      // Corner handles
+      const hs = HANDLE_SIZE / 2;
+      ctx.fillStyle = "#FFFFFF";
+      ctx.strokeStyle = "#2563EB";
+      ctx.lineWidth = 1.5;
+
+      const corners = [
+        [o.x, screenY],
+        [o.x + o.width, screenY],
+        [o.x, screenY + o.height],
+        [o.x + o.width, screenY + o.height],
+      ];
+
+      for (const [cx, cy] of corners) {
+        ctx.fillRect(cx - hs, cy - hs, HANDLE_SIZE, HANDLE_SIZE);
+        ctx.strokeRect(cx - hs, cy - hs, HANDLE_SIZE, HANDLE_SIZE);
+      }
 
       ctx.restore();
     }
@@ -616,12 +851,10 @@ export class InkCanvas {
   private wrapText(ctx: CanvasRenderingContext2D, text: string, maxWidth: number): string[] {
     const paragraphs = text.split("\n");
     const lines: string[] = [];
-
     for (const para of paragraphs) {
       if (para === "") { lines.push(""); continue; }
       const words = para.split(" ");
       let currentLine = words[0] || "";
-
       for (let i = 1; i < words.length; i++) {
         const test = currentLine + " " + words[i];
         if (ctx.measureText(test).width <= maxWidth) {
@@ -636,7 +869,9 @@ export class InkCanvas {
     return lines;
   }
 
-  // ─── Export ────────────────────────────────────────────────
+  // ═══════════════════════════════════════════════════════════════
+  //  EXPORT
+  // ═══════════════════════════════════════════════════════════════
 
   exportToPng(): string {
     const canvas = document.createElement("canvas");
@@ -644,27 +879,38 @@ export class InkCanvas {
     canvas.height = this.file.canvas.height;
     const ctx = canvas.getContext("2d")!;
 
-    const fullVp: Viewport = {
-      width: this.file.canvas.width,
-      height: this.file.canvas.height,
-      scrollY: 0,
-    };
+    const fullVp: Viewport = { width: this.file.canvas.width, height: this.file.canvas.height, scrollY: 0 };
+
     this.paperRenderer.render(ctx, this.file.paper, fullVp);
 
+    // Images
+    const images = getImages(this.file);
+    for (const imgObj of images) {
+      const cachedImg = this.imageCache.get(imgObj.assetId);
+      if (cachedImg) {
+        ctx.drawImage(cachedImg, imgObj.x, imgObj.y, imgObj.width, imgObj.height);
+      }
+    }
+
+    // Strokes
     const strokes = getStrokes(this.file);
     this.strokeRenderer.renderAll(ctx, strokes, fullVp);
 
-    const savedScrollY = this.viewport.scrollY;
+    // Text
+    const savedVp = { ...this.viewport };
     const savedMode = this.mode;
-    this.viewport.scrollY = 0;
-    this.mode = "draw";
-    this.inputHandler.setEnabled(true); // Hide selection outlines in export
+    this.viewport = fullVp;
+    this.mode = "draw"; // hide handles
     this.renderTextObjects(ctx);
-    this.viewport.scrollY = savedScrollY;
+    this.viewport = savedVp;
     this.mode = savedMode;
 
     return canvas.toDataURL("image/png");
   }
+
+  // ═══════════════════════════════════════════════════════════════
+  //  STATE
+  // ═══════════════════════════════════════════════════════════════
 
   getFile(): InkwellFile {
     if (this.activeTextarea) this.commitText();
@@ -674,6 +920,8 @@ export class InkCanvas {
 
   isDirty(): boolean { return this.dirty; }
   markClean(): void { this.dirty = false; }
+
+  getImageCache(): Map<string, HTMLImageElement> { return this.imageCache; }
 
   destroy(): void {
     if (this.activeTextarea) this.commitText();
@@ -687,17 +935,4 @@ export class InkCanvas {
     this.activeCanvas.remove();
     this.overlayLayer.remove();
   }
-}
-
-function computeBoundsFromPoints(points: [number, number, number, number][]): {
-  x: number; y: number; width: number; height: number;
-} {
-  let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
-  for (const [px, py] of points) {
-    if (px < minX) minX = px;
-    if (py < minY) minY = py;
-    if (px > maxX) maxX = px;
-    if (py > maxY) maxY = py;
-  }
-  return { x: minX, y: minY, width: maxX - minX, height: maxY - minY };
 }

@@ -26,6 +26,7 @@ export interface ToolbarCallbacks {
   onExportPng: () => void;
   onExportPdf: () => void;
   onModeChange: (mode: InteractionMode) => void;
+  onInsertImage: () => void;
 }
 
 export class Toolbar {
@@ -107,6 +108,14 @@ export class Toolbar {
 
     this.container.createDiv({ cls: "inkwell-toolbar-sep" });
 
+    // ─── Insert ─────────────────────────────────
+    const insertGroup = this.container.createDiv({ cls: "inkwell-toolbar-group" });
+
+    const imgBtn = insertGroup.createEl("button", { cls: "inkwell-tool-btn", text: "🏞️", attr: { "aria-label": "Insert Image" } });
+    imgBtn.addEventListener("click", () => this.callbacks.onInsertImage());
+
+    this.container.createDiv({ cls: "inkwell-toolbar-sep" });
+
     // ─── Undo/Redo ──────────────────────────────
     const histGroup = this.container.createDiv({ cls: "inkwell-toolbar-group" });
     const undoBtn = histGroup.createEl("button", { cls: "inkwell-tool-btn", text: "↩", attr: { "aria-label": "Undo" } });
@@ -149,7 +158,6 @@ export class Toolbar {
       btn.addClass("is-active");
       this.activeTool = tool;
       this.callbacks.onToolChange(tool);
-      // Switch back to draw mode when picking a draw tool
       this.setMode("draw");
     });
   }

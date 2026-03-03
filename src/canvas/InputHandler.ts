@@ -29,7 +29,6 @@ export class InputHandler {
 
   setEnabled(enabled: boolean): void {
     this.enabled = enabled;
-    // Release any active pointer if disabling mid-stroke
     if (!enabled && this.isDrawing) {
       this.callbacks.onStrokeEnd();
       this.isDrawing = false;
@@ -61,7 +60,7 @@ export class InputHandler {
   }
 
   private onPointerDown = (e: PointerEvent): void => {
-    // Always handle touch for scrolling, but skip pen/mouse when disabled
+    // Always handle touch for scrolling
     if (e.pointerType === "touch") {
       e.preventDefault();
       this.isPanning = true;

@@ -16,8 +16,8 @@ export interface PaperConfig {
 export interface BaseObject {
   id: string;
   type: string;
-  x: number;       // bounding box left
-  y: number;       // bounding box top
+  x: number;
+  y: number;
   width: number;
   height: number;
   locked: boolean;
@@ -59,7 +59,7 @@ export interface ImageObject extends BaseObject {
 
 export interface WidgetObject extends BaseObject {
   type: "widget";
-  content: string;   // raw markdown
+  content: string;
 }
 
 // ─── Union Type ────────────────────────────────────────────────
@@ -227,4 +227,12 @@ export function generateId(prefix: string = "obj"): string {
 
 export function getStrokes(file: InkwellFile): StrokeObject[] {
   return Object.values(file.objects).filter((o): o is StrokeObject => o.type === "stroke");
+}
+
+export function getImages(file: InkwellFile): ImageObject[] {
+  return Object.values(file.objects).filter((o): o is ImageObject => o.type === "image");
+}
+
+export function getTexts(file: InkwellFile): TextObject[] {
+  return Object.values(file.objects).filter((o): o is TextObject => o.type === "text");
 }

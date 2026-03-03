@@ -1,7 +1,7 @@
 import { PaperConfig, Viewport } from "../model/types";
 
 export const PAGE_HEIGHT = 1600;
-const PAGE_GAP = 18; // visual gap at page breaks
+const PAGE_GAP = 18;
 
 export class PaperRenderer {
   render(ctx: CanvasRenderingContext2D, paper: PaperConfig, vp: Viewport): void {
@@ -31,14 +31,10 @@ export class PaperRenderer {
 
     for (let p = firstPage + 1; p <= lastPage; p++) {
       const breakY = p * PAGE_HEIGHT - vp.scrollY;
-      const gapTop = breakY - PAGE_GAP / 2;
-      const gapBottom = breakY + PAGE_GAP / 2;
 
-      // Fill gap with slightly darker background
       ctx.fillStyle = "#E8E8EC";
-      ctx.fillRect(0, gapTop, vp.width, PAGE_GAP);
+      ctx.fillRect(0, breakY - PAGE_GAP / 2, vp.width, PAGE_GAP);
 
-      // Dashed line in center of gap
       ctx.save();
       ctx.strokeStyle = "#B0B0C0";
       ctx.lineWidth = 1;
@@ -57,17 +53,15 @@ export class PaperRenderer {
     ctx.strokeStyle = lineColor;
     ctx.lineWidth = 0.5;
 
-    // Draw lines per page so each page gets its own top margin
     const firstPage = Math.floor(vp.scrollY / PAGE_HEIGHT);
     const lastPage = Math.ceil((vp.scrollY + vp.height) / PAGE_HEIGHT);
 
     ctx.beginPath();
     for (let p = firstPage; p <= lastPage; p++) {
       const pageTop = p * PAGE_HEIGHT;
-      const firstLine = 0;
       const lastLine = Math.floor((PAGE_HEIGHT - marginTop) / lineSpacing);
 
-      for (let i = firstLine; i <= lastLine; i++) {
+      for (let i = 0; i <= lastLine; i++) {
         const docY = pageTop + marginTop + i * lineSpacing;
         const screenY = Math.round(docY - vp.scrollY) + 0.5;
         if (screenY < -1) continue;
@@ -78,7 +72,6 @@ export class PaperRenderer {
     }
     ctx.stroke();
 
-    // Red margin line
     if (margin > 0) {
       ctx.strokeStyle = "#E8A0A0";
       ctx.lineWidth = 1;
