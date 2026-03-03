@@ -7,14 +7,6 @@ export interface InputCallbacks {
   onScroll: (deltaY: number) => void;
 }
 
-/**
- * Handles pointer events with automatic palm rejection.
- *
- * Key insight: PointerEvent.pointerType tells us EXACTLY what's touching:
- *   - "pen"   → Apple Pencil / stylus → DRAW
- *   - "touch" → finger → SCROLL only
- *   - "mouse" → mouse/trackpad → DRAW (for desktop testing)
- */
 export class InputHandler {
   private container: HTMLElement;
   private callbacks: InputCallbacks;
@@ -23,6 +15,7 @@ export class InputHandler {
   private isPanning = false;
   private lastTouchY = 0;
   private activePointerId: number | null = null;
+  private enabled = true;
 
   constructor(container: HTMLElement, callbacks: InputCallbacks) {
     this.container = container;
@@ -34,23 +27,27 @@ export class InputHandler {
     this.activeTool = tool;
   }
 
+  setEnabled(enabled: boolean): void {
+    this.enabled = enabled;
+    // Release any active pointer if disabling mid-stroke
+    if (!enabled && this.isDrawing) {
+      this.callbacks.onStrokeEnd();
+      this.isDrawing = false;
+      this.activePointerId = null;
+    }
+  }
+
   destroy(): void {
     this.unbindEvents();
   }
 
-  // ─── Event Binding ─────────────────────────────────────────
-
   private bindEvents(): void {
     const el = this.container;
-    // Use { passive: false } so we can preventDefault on touch events
-    // to stop Obsidian from scrolling the page
     el.addEventListener("pointerdown", this.onPointerDown, { passive: false });
     el.addEventListener("pointermove", this.onPointerMove, { passive: false });
     el.addEventListener("pointerup", this.onPointerUp);
     el.addEventListener("pointercancel", this.onPointerUp);
     el.addEventListener("pointerleave", this.onPointerUp);
-
-    // Prevent default touch actions (we handle scrolling ourselves)
     el.style.touchAction = "none";
   }
 
@@ -63,27 +60,30 @@ export class InputHandler {
     el.removeEventListener("pointerleave", this.onPointerUp);
   }
 
-  // ─── Event Handlers ────────────────────────────────────────
-
   private onPointerDown = (e: PointerEvent): void => {
+    // Always handle touch for scrolling, but skip pen/mouse when disabled
+    if (e.pointerType === "touch") {
+      e.preventDefault();
+      this.isPanning = true;
+      this.activePointerId = e.pointerId;
+      this.lastTouchY = e.clientY;
+      this.container.setPointerCapture(e.pointerId);
+      return;
+    }
+
+    // Skip pen/mouse when disabled (text mode)
+    if (!this.enabled) return;
+
     e.preventDefault();
 
     if (e.pointerType === "pen" || e.pointerType === "mouse") {
-      // Stylus or mouse → draw
       this.isDrawing = true;
       this.activePointerId = e.pointerId;
       this.container.setPointerCapture(e.pointerId);
 
       const point = this.extractPoint(e);
-      const id = generateId();
+      const id = generateId("s");
       this.callbacks.onStrokeStart(id, this.activeTool, point);
-
-    } else if (e.pointerType === "touch") {
-      // Finger → scroll/pan only
-      this.isPanning = true;
-      this.activePointerId = e.pointerId;
-      this.lastTouchY = e.clientY;
-      this.container.setPointerCapture(e.pointerId);
     }
   };
 
@@ -94,7 +94,6 @@ export class InputHandler {
     if (this.isDrawing && (e.pointerType === "pen" || e.pointerType === "mouse")) {
       const point = this.extractPoint(e);
       this.callbacks.onStrokeMove(point);
-
     } else if (this.isPanning && e.pointerType === "touch") {
       const deltaY = this.lastTouchY - e.clientY;
       this.lastTouchY = e.clientY;
@@ -116,17 +115,15 @@ export class InputHandler {
     try {
       this.container.releasePointerCapture(e.pointerId);
     } catch {
-      // Ignore — pointer may already be released
+      // Ignore
     }
   };
-
-  // ─── Helpers ───────────────────────────────────────────────
 
   private extractPoint(e: PointerEvent): StrokePoint {
     const rect = this.container.getBoundingClientRect();
     const x = e.clientX - rect.left;
     const y = e.clientY - rect.top;
-    const pressure = e.pressure || 0.5; // Default pressure for mouse
+    const pressure = e.pressure || 0.5;
     return [x, y, pressure, Date.now()];
   }
 }

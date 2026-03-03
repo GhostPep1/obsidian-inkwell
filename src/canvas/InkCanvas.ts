@@ -157,6 +157,7 @@ export class InkCanvas {
   setMode(mode: InteractionMode): void {
     if (this.activeTextarea) this.commitText();
     this.mode = mode;
+    this.inputHandler.setEnabled(mode === "draw");
     if (mode === "text") {
       this.activeCanvas.style.cursor = "text";
     } else {
@@ -168,6 +169,7 @@ export class InkCanvas {
     this.currentTool = tool;
     this.inputHandler.setTool(tool);
     this.mode = "draw";
+    this.inputHandler.setEnabled(true);
     this.activeCanvas.style.cursor = "crosshair";
   }
 
@@ -655,7 +657,8 @@ export class InkCanvas {
     const savedScrollY = this.viewport.scrollY;
     const savedMode = this.mode;
     this.viewport.scrollY = 0;
-    this.mode = "draw"; // Hide selection outlines in export
+    this.mode = "draw";
+    this.inputHandler.setEnabled(true); // Hide selection outlines in export
     this.renderTextObjects(ctx);
     this.viewport.scrollY = savedScrollY;
     this.mode = savedMode;
