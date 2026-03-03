@@ -1,4 +1,4 @@
-import { TextFileView, WorkspaceLeaf, TFile, Notice, FuzzySuggestModal, App } from "obsidian";
+import { TextFileView, WorkspaceLeaf, TFile, Notice } from "obsidian";
 import { InkCanvas } from "./canvas/InkCanvas";
 import { Toolbar, InteractionMode } from "./ui/Toolbar";
 import { PdfExporter } from "./export/PdfExporter";
@@ -6,39 +6,6 @@ import { InkwellFile, createDefaultFile, ToolType, migrateV1, generateId } from 
 import type InkwellPlugin from "./main";
 
 export const INKWELL_VIEW_TYPE = "inkwell-view";
-
-// ─── Image Picker Modal ────────────────────────────────────────
-
-class ImagePickerModal extends FuzzySuggestModal<TFile> {
-  private imageFiles: TFile[];
-  private onChoose: (file: TFile) => void;
-
-  constructor(app: App, onChoose: (file: TFile) => void) {
-    super(app);
-    this.onChoose = onChoose;
-    this.setPlaceholder("Search for an image to insert...");
-
-    // Gather all image files in vault
-    const imageExtensions = ["png", "jpg", "jpeg", "gif", "webp", "bmp", "svg"];
-    this.imageFiles = app.vault.getFiles().filter(
-      (f) => imageExtensions.includes(f.extension.toLowerCase())
-    );
-  }
-
-  getItems(): TFile[] {
-    return this.imageFiles;
-  }
-
-  getItemText(item: TFile): string {
-    return item.path;
-  }
-
-  onChooseItem(item: TFile): void {
-    this.onChoose(item);
-  }
-}
-
-// ─── InkwellView ───────────────────────────────────────────────
 
 export class InkwellView extends TextFileView {
   private plugin: InkwellPlugin;
@@ -115,59 +82,136 @@ export class InkwellView extends TextFileView {
     return null;
   };
 
-  // ─── Image Insertion ────────────────────────────────────────
+  // ─── Image Insertion: Native File Picker ────────────────────
+  // On iOS this shows Camera / Photo Library / Files
 
   private insertImage(): void {
-    const modal = new ImagePickerModal(this.app, (imageFile: TFile) => {
-      this.handleImageSelected(imageFile);
+    const input = document.createElement("input");
+    input.type = "file";
+    input.accept = "image/*";
+    input.style.display = "none";
+    document.body.appendChild(input);
+
+    input.addEventListener("change", async () => {
+      const file = input.files?.[0];
+      if (file) {
+        await this.handleExternalImage(file);
+      }
+      input.remove();
     });
-    modal.open();
+
+    // Clean up if they cancel
+    input.addEventListener("cancel", () => input.remove());
+    // Fallback cleanup
+    setTimeout(() => { if (input.parentNode) input.remove(); }, 120000);
+
+    input.click();
   }
 
-  private async handleImageSelected(imageFile: TFile): Promise<void> {
-    if (!this.inkCanvas || !this.fileData) return;
+  // ─── Image Insertion: Clipboard Paste ───────────────────────
 
-    // Create asset entry
-    const assetId = generateId("asset");
-    this.fileData.assets[assetId] = {
-      vaultPath: imageFile.path,
-      mimeType: `image/${imageFile.extension.toLowerCase()}`,
-    };
+  private handlePaste = async (e: ClipboardEvent): Promise<void> => {
+    if (!e.clipboardData) return;
 
-    // Load image to get natural dimensions
-    const url = this.app.vault.getResourcePath(imageFile);
-    const img = new Image();
+    const items = Array.from(e.clipboardData.items);
+    const imageItem = items.find((item) => item.type.startsWith("image/"));
+    if (!imageItem) return;
 
-    img.onload = () => {
-      // Scale to fit within 400px wide, maintaining aspect ratio
-      const maxWidth = 400;
-      let width = img.naturalWidth;
-      let height = img.naturalHeight;
+    e.preventDefault();
+    const blob = imageItem.getAsFile();
+    if (!blob) return;
 
-      if (width > maxWidth) {
-        height = (maxWidth / width) * height;
-        width = maxWidth;
+    await this.handleExternalImage(blob);
+  };
+
+  // ─── Shared: Save external image to vault, then insert ──────
+
+  private async handleExternalImage(file: File | Blob): Promise<void> {
+    if (!this.inkCanvas || !this.fileData || !this.file) return;
+
+    try {
+      // Read file data
+      const buffer = await file.arrayBuffer();
+
+      // Determine filename and mime
+      const isFile = file instanceof File;
+      const originalName = isFile ? (file as File).name : "pasted-image";
+      const mimeType = file.type || "image/png";
+      const ext = mimeType.split("/")[1]?.replace("jpeg", "jpg") || "png";
+      const timestamp = Date.now();
+      const fileName = isFile
+        ? (file as File).name
+        : `paste-${timestamp}.${ext}`;
+
+      // Save to vault: same folder as the .inkwell file
+      const folder = this.file.parent?.path ?? "";
+      const assetDir = folder ? `${folder}/inkwell-assets` : "inkwell-assets";
+
+      // Ensure asset directory exists
+      if (!this.app.vault.getAbstractFileByPath(assetDir)) {
+        await this.app.vault.createFolder(assetDir);
       }
 
-      // Update asset with original dimensions
-      this.fileData!.assets[assetId].originalWidth = img.naturalWidth;
-      this.fileData!.assets[assetId].originalHeight = img.naturalHeight;
+      // Deduplicate filename
+      let assetPath = `${assetDir}/${fileName}`;
+      let counter = 1;
+      while (this.app.vault.getAbstractFileByPath(assetPath)) {
+        const base = fileName.replace(/\.[^.]+$/, "");
+        assetPath = `${assetDir}/${base}-${counter}.${ext}`;
+        counter++;
+      }
 
-      // Place at center of current viewport
-      const vp = this.inkCanvas!.getViewport();
-      const docX = Math.max(20, (vp.width - width) / 2);
-      const docY = vp.scrollY + Math.max(20, (vp.height - height) / 2);
+      // Write to vault
+      await this.app.vault.createBinary(assetPath, buffer);
 
-      this.inkCanvas!.addImage(assetId, docX, docY, width, height);
-      new Notice(`Inserted ${imageFile.name}`);
-    };
+      // Create asset entry
+      const assetId = generateId("asset");
+      this.fileData.assets[assetId] = {
+        vaultPath: assetPath,
+        mimeType,
+      };
 
-    img.onerror = () => {
-      delete this.fileData!.assets[assetId];
-      new Notice(`Failed to load ${imageFile.name}`);
-    };
+      // Load to get dimensions, then insert
+      const tFile = this.app.vault.getAbstractFileByPath(assetPath);
+      if (!(tFile instanceof TFile)) {
+        new Notice("Failed to save image");
+        return;
+      }
 
-    img.src = url;
+      const url = this.app.vault.getResourcePath(tFile);
+      const img = new Image();
+
+      img.onload = () => {
+        const maxWidth = 400;
+        let width = img.naturalWidth;
+        let height = img.naturalHeight;
+
+        if (width > maxWidth) {
+          height = (maxWidth / width) * height;
+          width = maxWidth;
+        }
+
+        this.fileData!.assets[assetId].originalWidth = img.naturalWidth;
+        this.fileData!.assets[assetId].originalHeight = img.naturalHeight;
+
+        const vp = this.inkCanvas!.getViewport();
+        const docX = Math.max(20, (vp.width - width) / 2);
+        const docY = vp.scrollY + Math.max(20, (vp.height - height) / 2);
+
+        this.inkCanvas!.addImage(assetId, docX, docY, width, height);
+        new Notice(`Inserted ${fileName}`);
+      };
+
+      img.onerror = () => {
+        delete this.fileData!.assets[assetId];
+        new Notice(`Failed to load image`);
+      };
+
+      img.src = url;
+    } catch (err) {
+      new Notice(`Image insert failed: ${err}`);
+      console.error("Inkwell: image insert failed", err);
+    }
   }
 
   // ─── UI Build ───────────────────────────────────────────────
@@ -201,6 +245,8 @@ export class InkwellView extends TextFileView {
       this.resolveAssetUrl,
     );
 
+    // Clipboard paste for images
+    this.registerDomEvent(contentEl, "paste", this.handlePaste as EventListener);
     this.registerDomEvent(contentEl, "keydown", this.onKeyDown.bind(this));
   }
 
