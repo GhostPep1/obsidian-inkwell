@@ -160,16 +160,20 @@ export class InkCanvas {
   private resize(): void {
     const containerW = this.container.clientWidth;
     const containerH = this.container.clientHeight;
-    const dpr = window.devicePixelRatio || 1;
     const paperWidth = this.file.canvas.width; // 1200
 
-    // Always fit paper to container width, then apply user zoom
     this.baseScale = containerW / paperWidth;
     this.viewScale = this.baseScale * this.userZoom;
 
-    // Logical dimensions = what we render in canvas coordinates
+    // Logical dimensions: always paper width, proportional height
     const logicalW = paperWidth;
-    const logicalH = containerH / this.viewScale;
+    const logicalH = containerH / this.baseScale;
+
+    // Cap DPR to keep each canvas under iOS 16M pixel limit
+    // iPhone 3x DPR with 1200×2150 = 23M pixels per canvas → crash
+    const rawDpr = window.devicePixelRatio || 1;
+    const maxDpr = Math.max(1, Math.floor(Math.sqrt(16_000_000 / (logicalW * logicalH))));
+    const dpr = Math.min(rawDpr, maxDpr);
 
     this.viewport.width = logicalW;
     this.viewport.height = logicalH;
@@ -184,8 +188,19 @@ export class InkCanvas {
       ctx.scale(dpr, dpr);
     }
 
+    // Apply zoom via CSS transform (no buffer reallocation)
+    this.applyZoomTransform();
+
     this.renderBackground();
     this.renderAll();
+  }
+
+  private applyZoomTransform(): void {
+    const transform = this.userZoom !== 1 ? `scale(${this.userZoom})` : "";
+    for (const canvas of [this.bgCanvas, this.strokeCanvas, this.activeCanvas]) {
+      canvas.style.transformOrigin = "center top";
+      canvas.style.transform = transform;
+    }
   }
 
   // ═══════════════════════════════════════════════════════════════
@@ -685,9 +700,11 @@ export class InkCanvas {
 
   private handleZoom(scaleDelta: number): void {
     const oldZoom = this.userZoom;
-    this.userZoom = Math.max(0.25, Math.min(3.0, this.userZoom + scaleDelta));
+    this.userZoom = Math.max(0.5, Math.min(3.0, this.userZoom + scaleDelta));
     if (this.userZoom === oldZoom) return;
-    this.resize();
+    this.viewScale = this.baseScale * this.userZoom;
+    // CSS-only zoom — no buffer reallocation, no re-render
+    this.applyZoomTransform();
   }
 
   private eraseAtPoint(point: StrokePoint): void {
