@@ -61,6 +61,7 @@ export class InkCanvas {
   private penColor = "#1A1A2E";
   private penWidth = 4;
   private resizeObserver: ResizeObserver;
+  private viewScale = 1;
 
   // Text editing
   private activeTextarea: HTMLTextAreaElement | null = null;
@@ -154,18 +155,26 @@ export class InkCanvas {
   }
 
   private resize(): void {
-    const w = this.container.clientWidth;
-    const h = this.container.clientHeight;
+    const containerW = this.container.clientWidth;
+    const containerH = this.container.clientHeight;
     const dpr = window.devicePixelRatio || 1;
+    const paperWidth = this.file.canvas.width; // 1200
 
-    this.viewport.width = w;
-    this.viewport.height = h;
+    // On narrow screens (phones), render at full paper width and let CSS scale down
+    const needsScale = containerW < paperWidth;
+    const scale = needsScale ? containerW / paperWidth : 1;
+    this.viewScale = scale;
+    const logicalW = needsScale ? paperWidth : containerW;
+    const logicalH = needsScale ? containerH / scale : containerH;
+
+    this.viewport.width = logicalW;
+    this.viewport.height = logicalH;
 
     for (const canvas of [this.bgCanvas, this.strokeCanvas, this.activeCanvas]) {
-      canvas.width = w * dpr;
-      canvas.height = h * dpr;
-      canvas.style.width = `${w}px`;
-      canvas.style.height = `${h}px`;
+      canvas.width = logicalW * dpr;
+      canvas.height = logicalH * dpr;
+      canvas.style.width = `${containerW}px`;
+      canvas.style.height = `${containerH}px`;
 
       const ctx = canvas.getContext("2d")!;
       ctx.scale(dpr, dpr);
@@ -266,8 +275,8 @@ export class InkCanvas {
 
   private getDocCoords(e: PointerEvent): { screenX: number; screenY: number; docX: number; docY: number } {
     const rect = this.activeCanvas.getBoundingClientRect();
-    const screenX = e.clientX - rect.left;
-    const screenY = e.clientY - rect.top;
+    const screenX = (e.clientX - rect.left) / this.viewScale;
+    const screenY = (e.clientY - rect.top) / this.viewScale;
     return { screenX, screenY, docX: screenX, docY: screenY + this.viewport.scrollY };
   }
 
@@ -511,11 +520,11 @@ export class InkCanvas {
     const ta = document.createElement("textarea");
     ta.addClass("inkwell-text-input");
     ta.style.position = "absolute";
-    ta.style.left = `${screenX}px`;
-    ta.style.top = `${screenY}px`;
-    ta.style.minWidth = "100px";
-    ta.style.minHeight = "28px";
-    ta.style.fontSize = `${textObj.fontSize}px`;
+    ta.style.left = `${screenX * this.viewScale}px`;
+    ta.style.top = `${screenY * this.viewScale}px`;
+    ta.style.minWidth = `${100 * this.viewScale}px`;
+    ta.style.minHeight = `${28 * this.viewScale}px`;
+    ta.style.fontSize = `${textObj.fontSize * this.viewScale}px`;
     ta.style.fontFamily = textObj.fontFamily;
     ta.style.color = textObj.color;
     ta.style.textAlign = textObj.align;
@@ -553,8 +562,8 @@ export class InkCanvas {
     if (content.length > 0) {
       const rect = ta.getBoundingClientRect();
       const containerRect = this.container.getBoundingClientRect();
-      const screenX = rect.left - containerRect.left;
-      const screenY = rect.top - containerRect.top;
+      const screenX = (rect.left - containerRect.left) / this.viewScale;
+      const screenY = (rect.top - containerRect.top) / this.viewScale;
 
       const existing = this.file.objects[this.editingTextId] as TextObject | undefined;
 
@@ -562,7 +571,7 @@ export class InkCanvas {
         id: this.editingTextId, type: "text",
         x: screenX,
         y: screenY + this.viewport.scrollY,
-        width: rect.width, height: rect.height,
+        width: rect.width / this.viewScale, height: rect.height / this.viewScale,
         locked: false, content,
         fontSize: existing?.fontSize ?? TEXT_DEFAULTS.fontSize,
         fontFamily: existing?.fontFamily ?? TEXT_DEFAULTS.fontFamily,
@@ -596,10 +605,13 @@ export class InkCanvas {
   private handleStrokeStart(id: string, tool: ToolType, point: StrokePoint): void {
     if (this.mode === "text") return;
 
-    if (tool === "eraser") { this.eraseAtPoint(point); return; }
+    // Scale screen coords to logical coords on phone
+    const scaledPoint: StrokePoint = [point[0] / this.viewScale, point[1] / this.viewScale, point[2], point[3]];
+
+    if (tool === "eraser") { this.eraseAtPoint(scaledPoint); return; }
 
     const defaults = TOOL_DEFAULTS[tool];
-    const docPoint: StrokePoint = [point[0], point[1] + this.viewport.scrollY, point[2], point[3]];
+    const docPoint: StrokePoint = [scaledPoint[0], scaledPoint[1] + this.viewport.scrollY, scaledPoint[2], scaledPoint[3]];
     this.maybeExtendCanvas(docPoint[1]);
 
     this.currentStroke = {
@@ -615,10 +627,13 @@ export class InkCanvas {
 
   private handleStrokeMove(point: StrokePoint): void {
     if (this.mode === "text") return;
-    if (this.currentTool === "eraser") { this.eraseAtPoint(point); return; }
+
+    const scaledPoint: StrokePoint = [point[0] / this.viewScale, point[1] / this.viewScale, point[2], point[3]];
+
+    if (this.currentTool === "eraser") { this.eraseAtPoint(scaledPoint); return; }
     if (!this.currentStroke) return;
 
-    const docPoint: StrokePoint = [point[0], point[1] + this.viewport.scrollY, point[2], point[3]];
+    const docPoint: StrokePoint = [scaledPoint[0], scaledPoint[1] + this.viewport.scrollY, scaledPoint[2], scaledPoint[3]];
     this.currentStroke.points.push(docPoint);
     this.maybeExtendCanvas(docPoint[1]);
 
@@ -650,8 +665,9 @@ export class InkCanvas {
   }
 
   private handleScroll(deltaY: number): void {
+    const scaledDelta = deltaY / this.viewScale;
     const maxScroll = Math.max(0, this.file.canvas.height - this.viewport.height);
-    this.viewport.scrollY = Math.max(0, Math.min(maxScroll, this.viewport.scrollY + deltaY));
+    this.viewport.scrollY = Math.max(0, Math.min(maxScroll, this.viewport.scrollY + scaledDelta));
     this.file.canvas.scrollY = this.viewport.scrollY;
 
     if (this.activeTextarea && this.editingTextId) {
