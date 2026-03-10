@@ -64,6 +64,7 @@ export class InkCanvas {
   private viewScale = 1;
   private userZoom = 1;
   private baseScale = 1;
+  private panX = 0; // CSS pixels, horizontal pan offset when zoomed
 
   // Text editing
   private activeTextarea: HTMLTextAreaElement | null = null;
@@ -127,8 +128,9 @@ export class InkCanvas {
       onStrokeStart: this.handleStrokeStart.bind(this),
       onStrokeMove: this.handleStrokeMove.bind(this),
       onStrokeEnd: this.handleStrokeEnd.bind(this),
-      onScroll: this.handleScroll.bind(this),
+      onPan: this.handlePan.bind(this),
       onZoom: this.handleZoom.bind(this),
+      onTouchTap: this.handleTouchTap.bind(this),
     });
 
     this.boundPointerDown = this.handlePointerDown.bind(this);
@@ -196,9 +198,15 @@ export class InkCanvas {
   }
 
   private applyZoomTransform(): void {
-    const transform = this.userZoom !== 1 ? `scale(${this.userZoom})` : "";
+    const hasZoom = this.userZoom !== 1;
+    const hasPan = this.panX !== 0;
+    let transform = "";
+    if (hasZoom || hasPan) {
+      // translate in screen pixels, then scale
+      transform = `translate(${this.panX}px, 0px) scale(${this.userZoom})`;
+    }
     for (const canvas of [this.bgCanvas, this.strokeCanvas, this.activeCanvas]) {
-      canvas.style.transformOrigin = "center top";
+      canvas.style.transformOrigin = "0 0";
       canvas.style.transform = transform;
     }
   }
@@ -267,6 +275,7 @@ export class InkCanvas {
     if (this.activeTextarea) this.commitText();
     this.mode = mode;
     this.inputHandler.setEnabled(mode === "draw");
+    this.inputHandler.setMode(mode);
     if (mode === "text") {
       this.activeCanvas.style.cursor = "default";
     } else {
@@ -683,11 +692,21 @@ export class InkCanvas {
     this.onDirty();
   }
 
-  private handleScroll(deltaY: number): void {
-    const scaledDelta = deltaY / this.viewScale;
+  private handlePan(deltaX: number, deltaY: number): void {
+    // Vertical scroll (in logical coords)
+    const scaledDeltaY = deltaY / this.viewScale;
     const maxScroll = Math.max(0, this.file.canvas.height - this.viewport.height);
-    this.viewport.scrollY = Math.max(0, Math.min(maxScroll, this.viewport.scrollY + scaledDelta));
+    this.viewport.scrollY = Math.max(0, Math.min(maxScroll, this.viewport.scrollY + scaledDeltaY));
     this.file.canvas.scrollY = this.viewport.scrollY;
+
+    // Horizontal pan (CSS pixels, only when zoomed)
+    if (this.userZoom > 1) {
+      const containerW = this.container.clientWidth;
+      const scaledW = containerW * this.userZoom;
+      const maxPanX = scaledW - containerW;
+      this.panX = Math.max(-maxPanX, Math.min(0, this.panX - deltaX));
+      this.applyZoomTransform();
+    }
 
     if (this.activeTextarea && this.editingTextId) {
       const obj = this.file.objects[this.editingTextId] as TextObject;
@@ -698,12 +717,41 @@ export class InkCanvas {
     this.renderAll();
   }
 
+  private handleTouchTap(clientX: number, clientY: number): void {
+    if (this.mode !== "text") return;
+
+    // Convert client coords to doc coords
+    const rect = this.activeCanvas.getBoundingClientRect();
+    const screenX = (clientX - rect.left) / this.viewScale;
+    const screenY = (clientY - rect.top) / this.viewScale;
+    const docX = screenX;
+    const docY = screenY + this.viewport.scrollY;
+
+    // Check for existing text to edit
+    const hitText = this.findTextAt(docX, docY);
+    if (hitText) {
+      this.editExistingText(hitText);
+    } else if (!this.findObjectAt(docX, docY)) {
+      this.createNewText(screenX, screenY, docX, docY);
+    }
+  }
+
   private handleZoom(scaleDelta: number): void {
     const oldZoom = this.userZoom;
     this.userZoom = Math.max(0.5, Math.min(3.0, this.userZoom + scaleDelta));
     if (this.userZoom === oldZoom) return;
     this.viewScale = this.baseScale * this.userZoom;
-    // CSS-only zoom — no buffer reallocation, no re-render
+
+    // Clamp panX to valid range at new zoom
+    if (this.userZoom <= 1) {
+      this.panX = 0;
+    } else {
+      const containerW = this.container.clientWidth;
+      const scaledW = containerW * this.userZoom;
+      const maxPanX = scaledW - containerW;
+      this.panX = Math.max(-maxPanX, Math.min(0, this.panX));
+    }
+
     this.applyZoomTransform();
   }
 
