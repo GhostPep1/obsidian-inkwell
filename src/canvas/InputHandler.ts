@@ -5,6 +5,7 @@ export interface InputCallbacks {
   onStrokeMove: (point: StrokePoint) => void;
   onStrokeEnd: () => void;
   onScroll: (deltaY: number) => void;
+  onZoom: (scaleDelta: number) => void;
 }
 
 export class InputHandler {
@@ -16,6 +17,11 @@ export class InputHandler {
   private lastTouchY = 0;
   private activePointerId: number | null = null;
   private enabled = true;
+
+  // Pinch-to-zoom state
+  private activeTouches: Map<number, { x: number; y: number }> = new Map();
+  private lastPinchDist = 0;
+  private isPinching = false;
 
   constructor(container: HTMLElement, callbacks: InputCallbacks) {
     this.container = container;
@@ -47,6 +53,7 @@ export class InputHandler {
     el.addEventListener("pointerup", this.onPointerUp);
     el.addEventListener("pointercancel", this.onPointerUp);
     el.addEventListener("pointerleave", this.onPointerUp);
+    el.addEventListener("wheel", this.onWheel, { passive: false });
     el.style.touchAction = "none";
   }
 
@@ -57,12 +64,40 @@ export class InputHandler {
     el.removeEventListener("pointerup", this.onPointerUp);
     el.removeEventListener("pointercancel", this.onPointerUp);
     el.removeEventListener("pointerleave", this.onPointerUp);
+    el.removeEventListener("wheel", this.onWheel);
   }
 
+  // ─── Mouse Wheel: scroll + ctrl-zoom ─────────────
+
+  private onWheel = (e: WheelEvent): void => {
+    e.preventDefault();
+
+    if (e.ctrlKey || e.metaKey) {
+      // Ctrl+wheel = zoom (or trackpad pinch which browsers send as ctrl+wheel)
+      const zoomDelta = -e.deltaY * 0.005;
+      this.callbacks.onZoom(zoomDelta);
+    } else {
+      // Regular scroll
+      this.callbacks.onScroll(e.deltaY);
+    }
+  };
+
+  // ─── Pointer Events ──────────────────────────────
+
   private onPointerDown = (e: PointerEvent): void => {
-    // Always handle touch for scrolling
     if (e.pointerType === "touch") {
       e.preventDefault();
+      this.activeTouches.set(e.pointerId, { x: e.clientX, y: e.clientY });
+
+      if (this.activeTouches.size === 2) {
+        // Second finger down → start pinch
+        this.isPinching = true;
+        this.isPanning = false;
+        this.lastPinchDist = this.getPinchDistance();
+        return;
+      }
+
+      // Single finger → pan
       this.isPanning = true;
       this.activePointerId = e.pointerId;
       this.lastTouchY = e.clientY;
@@ -87,20 +122,55 @@ export class InputHandler {
   };
 
   private onPointerMove = (e: PointerEvent): void => {
+    if (e.pointerType === "touch") {
+      e.preventDefault();
+      this.activeTouches.set(e.pointerId, { x: e.clientX, y: e.clientY });
+
+      if (this.isPinching && this.activeTouches.size >= 2) {
+        const dist = this.getPinchDistance();
+        if (this.lastPinchDist > 0) {
+          const scaleDelta = (dist - this.lastPinchDist) * 0.005;
+          this.callbacks.onZoom(scaleDelta);
+        }
+        this.lastPinchDist = dist;
+        return;
+      }
+
+      if (this.isPanning && e.pointerId === this.activePointerId) {
+        const deltaY = this.lastTouchY - e.clientY;
+        this.lastTouchY = e.clientY;
+        this.callbacks.onScroll(deltaY);
+      }
+      return;
+    }
+
     if (e.pointerId !== this.activePointerId) return;
     e.preventDefault();
 
     if (this.isDrawing && (e.pointerType === "pen" || e.pointerType === "mouse")) {
       const point = this.extractPoint(e);
       this.callbacks.onStrokeMove(point);
-    } else if (this.isPanning && e.pointerType === "touch") {
-      const deltaY = this.lastTouchY - e.clientY;
-      this.lastTouchY = e.clientY;
-      this.callbacks.onScroll(deltaY);
     }
   };
 
   private onPointerUp = (e: PointerEvent): void => {
+    if (e.pointerType === "touch") {
+      this.activeTouches.delete(e.pointerId);
+
+      if (this.isPinching && this.activeTouches.size < 2) {
+        this.isPinching = false;
+        this.lastPinchDist = 0;
+      }
+
+      if (e.pointerId === this.activePointerId) {
+        this.isPanning = false;
+        this.activePointerId = null;
+      }
+
+      try { this.container.releasePointerCapture(e.pointerId); } catch {}
+      return;
+    }
+
     if (e.pointerId !== this.activePointerId) return;
 
     if (this.isDrawing) {
@@ -117,6 +187,16 @@ export class InputHandler {
       // Ignore
     }
   };
+
+  // ─── Helpers ─────────────────────────────────────
+
+  private getPinchDistance(): number {
+    const touches = Array.from(this.activeTouches.values());
+    if (touches.length < 2) return 0;
+    const dx = touches[0].x - touches[1].x;
+    const dy = touches[0].y - touches[1].y;
+    return Math.sqrt(dx * dx + dy * dy);
+  }
 
   private extractPoint(e: PointerEvent): StrokePoint {
     const rect = this.container.getBoundingClientRect();

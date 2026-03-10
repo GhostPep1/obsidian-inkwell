@@ -62,6 +62,8 @@ export class InkCanvas {
   private penWidth = 4;
   private resizeObserver: ResizeObserver;
   private viewScale = 1;
+  private userZoom = 1;
+  private baseScale = 1;
 
   // Text editing
   private activeTextarea: HTMLTextAreaElement | null = null;
@@ -126,6 +128,7 @@ export class InkCanvas {
       onStrokeMove: this.handleStrokeMove.bind(this),
       onStrokeEnd: this.handleStrokeEnd.bind(this),
       onScroll: this.handleScroll.bind(this),
+      onZoom: this.handleZoom.bind(this),
     });
 
     this.boundPointerDown = this.handlePointerDown.bind(this);
@@ -160,12 +163,13 @@ export class InkCanvas {
     const dpr = window.devicePixelRatio || 1;
     const paperWidth = this.file.canvas.width; // 1200
 
-    // On narrow screens (phones), render at full paper width and let CSS scale down
-    const needsScale = containerW < paperWidth;
-    const scale = needsScale ? containerW / paperWidth : 1;
-    this.viewScale = scale;
-    const logicalW = needsScale ? paperWidth : containerW;
-    const logicalH = needsScale ? containerH / scale : containerH;
+    // Always fit paper to container width, then apply user zoom
+    this.baseScale = containerW / paperWidth;
+    this.viewScale = this.baseScale * this.userZoom;
+
+    // Logical dimensions = what we render in canvas coordinates
+    const logicalW = paperWidth;
+    const logicalH = containerH / this.viewScale;
 
     this.viewport.width = logicalW;
     this.viewport.height = logicalH;
@@ -672,11 +676,18 @@ export class InkCanvas {
 
     if (this.activeTextarea && this.editingTextId) {
       const obj = this.file.objects[this.editingTextId] as TextObject;
-      if (obj) this.activeTextarea.style.top = `${obj.y - this.viewport.scrollY}px`;
+      if (obj) this.activeTextarea.style.top = `${(obj.y - this.viewport.scrollY) * this.viewScale}px`;
     }
 
     this.renderBackground();
     this.renderAll();
+  }
+
+  private handleZoom(scaleDelta: number): void {
+    const oldZoom = this.userZoom;
+    this.userZoom = Math.max(0.25, Math.min(3.0, this.userZoom + scaleDelta));
+    if (this.userZoom === oldZoom) return;
+    this.resize();
   }
 
   private eraseAtPoint(point: StrokePoint): void {
