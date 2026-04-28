@@ -35,14 +35,28 @@ export class InkwellView extends TextFileView {
   async onClose(): Promise<void> { this.destroyCanvas(); }
 
   getViewData(): string {
-    if (this.fileData && this.inkCanvas) {
-      this.fileData = this.inkCanvas.getFile();
-    }
-    // Compact JSON (no indentation). Smaller files, fewer chunks, and
-    // tighter content boundaries for LiveSync's content-defined chunker.
-    return JSON.stringify(this.fileData);
+  if (this.fileData && this.inkCanvas) {
+    this.fileData = this.inkCanvas.getFile();
   }
+  if (!this.fileData) return "";
 
+  // Force canonical field order on every save. Legacy files have `modified`
+  // and `assets` in the wrong positions; if we re-stringify in source order
+  // we bake their misplacement into chunk-1 territory and break LiveSync
+  // dedup file-wide. Rebuilding in declared order pins volatile fields
+  // (`modified`) to the end of the file.
+  const f = this.fileData;
+  const ordered = {
+    version: f.version,
+    created: f.created,
+    paper: f.paper,
+    canvas: f.canvas,
+    objects: f.objects,
+    assets: f.assets,
+    modified: f.modified,
+  };
+  return JSON.stringify(ordered);
+}
   setViewData(data: string, clear: boolean): void {
     try {
       const parsed = JSON.parse(data);

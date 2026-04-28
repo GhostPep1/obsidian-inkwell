@@ -1,6 +1,6 @@
 {
   "name": "obsidian-inkwell",
-  "version": "0.13.1",
+  "version": "0.13.2",
   "description": "Native handwritten notes with ruled paper backgrounds",
   "main": "main.js",
   "scripts": {

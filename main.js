@@ -35499,7 +35499,19 @@ var InkwellView = class extends import_obsidian.TextFileView {
     if (this.fileData && this.inkCanvas) {
       this.fileData = this.inkCanvas.getFile();
     }
-    return JSON.stringify(this.fileData);
+    if (!this.fileData)
+      return "";
+    const f3 = this.fileData;
+    const ordered = {
+      version: f3.version,
+      created: f3.created,
+      paper: f3.paper,
+      canvas: f3.canvas,
+      objects: f3.objects,
+      assets: f3.assets,
+      modified: f3.modified
+    };
+    return JSON.stringify(ordered);
   }
   setViewData(data, clear) {
     try {
