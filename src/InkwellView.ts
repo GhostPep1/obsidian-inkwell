@@ -38,7 +38,9 @@ export class InkwellView extends TextFileView {
     if (this.fileData && this.inkCanvas) {
       this.fileData = this.inkCanvas.getFile();
     }
-    return JSON.stringify(this.fileData, null, 2);
+    // Compact JSON (no indentation). Smaller files, fewer chunks, and
+    // tighter content boundaries for LiveSync's content-defined chunker.
+    return JSON.stringify(this.fileData);
   }
 
   setViewData(data: string, clear: boolean): void {

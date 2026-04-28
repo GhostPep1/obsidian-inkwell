@@ -85,14 +85,21 @@ export interface CanvasConfig {
 
 // ─── File Format v2 ────────────────────────────────────────────
 
+// Field order matters: `modified` is intentionally placed LAST.
+// JSON.stringify preserves insertion order for string keys (V8/JSC honor
+// the ES2015 spec for non-integer keys). If `modified` is ever updated,
+// its byte change lands in the final chunk only — leaving the file's
+// header, paper, canvas, objects, and assets chunks recyclable across
+// saves under LiveSync's content-defined chunking. Do not move volatile
+// fields above `objects`.
 export interface InkwellFile {
   version: number;
   created: string;
-  modified: string;
   paper: PaperConfig;
   canvas: CanvasConfig;
   objects: Record<string, CanvasObject>;
   assets: Record<string, AssetEntry>;
+  modified: string;
 }
 
 // ─── Legacy Format (v1 migration) ──────────────────────────────
@@ -163,7 +170,6 @@ export function createDefaultFile(paperType: PaperType = "ruled"): InkwellFile {
   return {
     version: 2,
     created: now,
-    modified: now,
     paper: { type: paperType, ...preset },
     canvas: {
       width: 1200,
@@ -172,6 +178,7 @@ export function createDefaultFile(paperType: PaperType = "ruled"): InkwellFile {
     },
     objects: {},
     assets: {},
+    modified: now,
   };
 }
 
@@ -210,11 +217,11 @@ export function migrateV1(data: any): InkwellFile {
   return {
     version: 2,
     created: legacy.created,
-    modified: legacy.modified,
     paper: legacy.paper,
     canvas: legacy.canvas,
     objects,
     assets: {},
+    modified: legacy.modified,
   };
 }
 

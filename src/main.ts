@@ -49,7 +49,7 @@ export default class InkwellPlugin extends Plugin {
 
   async createNote(paperType: PaperType): Promise<void> {
     const file = createDefaultFile(paperType);
-    const content = JSON.stringify(file, null, 2);
+    const content = JSON.stringify(file);
 
     const timestamp = new Date().toISOString().replace(/[:.]/g, "-").slice(0, 19);
     const filename = `Inkwell ${timestamp}.inkwell`;

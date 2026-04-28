@@ -1006,7 +1006,11 @@ export class InkCanvas {
 
   getFile(): InkwellFile {
     if (this.activeTextarea) this.commitText();
-    this.file.modified = new Date().toISOString();
+    // Do NOT mutate this.file.modified on every save.
+    // Bumping a timestamp near the top of the JSON changes bytes that
+    // LiveSync's content-defined chunker hashes, defeating chunk dedup
+    // (every save would orphan the entire prior chunk set).
+    // Filesystem mtime already records last-modified time.
     return this.file;
   }
 
