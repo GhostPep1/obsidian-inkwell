@@ -57,6 +57,9 @@ export class InkwellView extends TextFileView {
       }
       if (!this.fileData.assets) this.fileData.assets = {};
       if (!this.fileData.objects) this.fileData.objects = {};
+      // Strip legacy viewport state. scrollY was serialized in <=0.13.0;
+      // it cascades chunk-1 byte shifts file-wide via length-shifting floats.
+      if ("scrollY" in this.fileData.canvas) delete (this.fileData.canvas as any).scrollY;
     } catch {
       this.fileData = createDefaultFile("ruled");
     }

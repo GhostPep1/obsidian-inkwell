@@ -80,7 +80,6 @@ export interface AssetEntry {
 export interface CanvasConfig {
   width: number;
   height: number;
-  scrollY: number;
 }
 
 // ─── File Format v2 ────────────────────────────────────────────
@@ -174,7 +173,6 @@ export function createDefaultFile(paperType: PaperType = "ruled"): InkwellFile {
     canvas: {
       width: 1200,
       height: 1600,
-      scrollY: 0,
     },
     objects: {},
     assets: {},

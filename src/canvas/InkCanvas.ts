@@ -121,7 +121,7 @@ export class InkCanvas {
     this.viewport = {
       width: container.clientWidth,
       height: container.clientHeight,
-      scrollY: file.canvas.scrollY,
+      scrollY: 0,
     };
 
     this.inputHandler = new InputHandler(this.activeCanvas, {
@@ -697,7 +697,6 @@ export class InkCanvas {
     const scaledDeltaY = deltaY / this.viewScale;
     const maxScroll = Math.max(0, this.file.canvas.height - this.viewport.height);
     this.viewport.scrollY = Math.max(0, Math.min(maxScroll, this.viewport.scrollY + scaledDeltaY));
-    this.file.canvas.scrollY = this.viewport.scrollY;
 
     // Horizontal pan (CSS pixels, only when zoomed)
     if (this.userZoom > 1) {
